@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Cache and data
+cache/
+*.json
+!package.json
+
+# Output files
+*.xlsx
+*.csv
+docs/
+
+# Input HTML files (large)
+html_games/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
