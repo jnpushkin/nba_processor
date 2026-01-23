@@ -145,7 +145,7 @@ def generate_website_from_data(processed_data: Dict[str, pd.DataFrame], output_p
     info(f"Website saved: {output_path}")
 
 
-def _build_games_summary(games_df: pd.DataFrame) -> List[Dict]:
+def _build_games_summary(games_df: pd.DataFrame, all_games: List[Dict] = None) -> List[Dict]:
     """Build one row per game with aggregated info."""
     if games_df.empty:
         return []
@@ -154,16 +154,72 @@ def _build_games_summary(games_df: pd.DataFrame) -> List[Dict]:
     if 'game_id' not in games_df.columns:
         return []
 
+    # Build a lookup from game_id to original game data for accurate home/away info
+    game_lookup = {}
+    if all_games:
+        for g in all_games:
+            gid = g.get('game_id', '')
+            if gid:
+                game_lookup[gid] = g
+
     for game_id, group in games_df.groupby('game_id'):
         first = group.iloc[0]
+
+        # Try to get accurate home/away from original game data
+        original = game_lookup.get(game_id, {})
+        basic_info = original.get('basic_info', {})
+
+        if basic_info:
+            away_team = basic_info.get('away_team', '')
+            home_team = basic_info.get('home_team', '')
+            away_score = basic_info.get('away_score', 0)
+            home_score = basic_info.get('home_score', 0)
+        else:
+            # Fallback to player data - determine home team from game_id
+            # game_id format: YYYYMMDD0XXX where XXX is home team code
+            home_code = game_id[9:12] if len(game_id) >= 12 else ''
+
+            # Get unique teams from this game's players
+            teams_in_game = group['team'].unique().tolist()
+
+            # Try to match home team by code
+            home_team = ''
+            away_team = ''
+            for t in teams_in_game:
+                t_code = _get_team_code_from_name(t)
+                if t_code and t_code.upper() == home_code.upper():
+                    home_team = t
+                else:
+                    away_team = t
+
+            # If we couldn't determine, just use what we have
+            if not home_team and teams_in_game:
+                home_team = teams_in_game[0]
+            if not away_team and len(teams_in_game) > 1:
+                away_team = teams_in_game[1]
+
+            # Get scores from player data
+            home_players = group[group['team'] == home_team] if home_team else group
+            away_players = group[group['team'] == away_team] if away_team else group
+
+            # Parse score from first player of each team
+            home_score = 0
+            away_score = 0
+            if not home_players.empty:
+                score_str = home_players.iloc[0].get('score', '')
+                if score_str and '-' in str(score_str):
+                    parts = str(score_str).split('-')
+                    home_score = int(parts[0]) if home_players.iloc[0].get('team') == home_team else int(parts[1])
+                    away_score = int(parts[1]) if home_players.iloc[0].get('team') == home_team else int(parts[0])
+
         games.append({
             'game_id': game_id,
             'date': first.get('date', ''),
             'date_yyyymmdd': first.get('date_yyyymmdd', ''),
-            'team': first.get('team', ''),
-            'opponent': first.get('opponent', ''),
-            'result': first.get('result', ''),
-            'score': first.get('score', ''),
+            'away_team': away_team,
+            'home_team': home_team,
+            'away_score': away_score,
+            'home_score': home_score,
             'game_type': first.get('game_type', 'regular'),
             'players': len(group),
         })
@@ -789,10 +845,17 @@ body {
 }
 .game-card:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
 .game-card-date { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; }
-.game-card-teams { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem; }
-.game-card-result { font-size: 0.9rem; color: var(--text-secondary); }
-.game-card-result .win { color: var(--success); font-weight: 600; }
-.game-card-result .loss { color: #e74c3c; font-weight: 600; }
+.game-card-matchup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+}
+.game-card-matchup .team-score { display: flex; align-items: center; gap: 0.35rem; }
+.game-card-matchup .team-score strong { font-size: 1.15rem; }
+.game-card-matchup .team-score.win { color: var(--success); }
+.game-card-matchup .at-symbol { color: var(--text-muted); font-size: 0.85rem; }
 
 /* Filters */
 .filters {
@@ -1056,9 +1119,19 @@ tr:hover { background: var(--hover-color); }
 
 /* Box Score */
 .boxscore-header { text-align: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 2px solid var(--border-color); }
-.boxscore-header h2 { font-size: 1.4rem; margin-bottom: 0.25rem; }
-.boxscore-header .date { color: var(--text-secondary); }
-.boxscore-header .result { font-size: 1.2rem; font-weight: 600; margin-top: 0.5rem; }
+.boxscore-header .date { color: var(--text-secondary); margin-top: 0.5rem; }
+.boxscore-matchup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    font-size: 1.3rem;
+    margin-bottom: 0.25rem;
+}
+.boxscore-team { display: flex; align-items: center; gap: 0.5rem; }
+.boxscore-team strong { font-size: 1.5rem; }
+.boxscore-team.winner { color: var(--success); }
+.boxscore-at { color: var(--text-muted); font-size: 1rem; }
 .boxscore-section { margin-bottom: 1.5rem; }
 .boxscore-section h4 { margin-bottom: 0.5rem; color: var(--accent-color); }
 
@@ -1172,13 +1245,25 @@ function renderGamesGrid() {
     }
 
     grid.innerHTML = games.map((g, i) => {
-        const resultClass = g.result && g.result.toLowerCase().startsWith('w') ? 'win' : 'loss';
+        const awayTeam = getShortName(g.away_team) || g.away_team || 'Away';
+        const homeTeam = getShortName(g.home_team) || g.home_team || 'Home';
+        const awayScore = g.away_score || 0;
+        const homeScore = g.home_score || 0;
         const gameType = g.game_type && g.game_type !== 'regular' ? `<span style="font-size:0.75rem;opacity:0.7;margin-left:0.5rem;">(${g.game_type})</span>` : '';
+
+        // Format: "Away Team 105 @ Home Team 110" or show winner highlighted
+        const awayWon = awayScore > homeScore;
+        const awayClass = awayWon ? 'win' : '';
+        const homeClass = !awayWon ? 'win' : '';
+
         return `
         <div class="game-card" onclick="showBoxScore('${g.game_id}')">
-            <div class="game-card-date">${g.date}</div>
-            <div class="game-card-teams">${g.team} vs ${g.opponent}${gameType}</div>
-            <div class="game-card-result"><span class="${resultClass}">${g.result || ''}</span> ${g.score || ''}</div>
+            <div class="game-card-date">${g.date}${gameType}</div>
+            <div class="game-card-matchup">
+                <span class="team-score ${awayClass}">${awayTeam} <strong>${awayScore}</strong></span>
+                <span class="at-symbol">@</span>
+                <span class="team-score ${homeClass}"><strong>${homeScore}</strong> ${homeTeam}</span>
+            </div>
         </div>`;
     }).join('');
 }
@@ -1202,14 +1287,19 @@ function showBoxScore(gameId) {
     if (!playerGames.length) { showToast('No box score data'); return; }
 
     const detail = document.getElementById('boxscore-detail');
-    const resultClass = gameInfo?.result?.toLowerCase().startsWith('w') ? 'win' : 'loss';
     const gameType = gameInfo?.game_type && gameInfo.game_type !== 'regular' ? ` (${gameInfo.game_type})` : '';
 
-    // Group players by team
+    // Get away/home info
+    const awayTeam = gameInfo?.away_team || '';
+    const homeTeam = gameInfo?.home_team || '';
+    const awayScore = gameInfo?.away_score || 0;
+    const homeScore = gameInfo?.home_score || 0;
+
+    // Group players by team, organizing into away and home
     const teams = {};
     playerGames.forEach(p => {
         const team = p.team || 'Unknown';
-        if (!teams[team]) teams[team] = { starters: [], bench: [] };
+        if (!teams[team]) teams[team] = { starters: [], bench: [], isHome: team === homeTeam };
         if (p.starter) {
             teams[team].starters.push(p);
         } else {
@@ -1223,15 +1313,23 @@ function showBoxScore(gameId) {
         t.bench.sort((a, b) => (b.mp || 0) - (a.mp || 0));
     });
 
+    // Sort teams: away first, then home
+    const sortedTeams = Object.entries(teams).sort((a, b) => a[1].isHome - b[1].isHome);
+
+    const awayWon = awayScore > homeScore;
+
     let html = `
     <div class="boxscore-header">
-        <h2>${gameInfo?.team || ''} vs ${gameInfo?.opponent || ''}${gameType}</h2>
-        <div class="date">${gameInfo?.date || ''}</div>
-        <div class="result"><span class="${resultClass}">${gameInfo?.result || ''}</span> ${gameInfo?.score || ''}</div>
+        <div class="boxscore-matchup">
+            <span class="boxscore-team ${awayWon ? 'winner' : ''}">${awayTeam} <strong>${awayScore}</strong></span>
+            <span class="boxscore-at">@</span>
+            <span class="boxscore-team ${!awayWon ? 'winner' : ''}"><strong>${homeScore}</strong> ${homeTeam}</span>
+        </div>
+        <div class="date">${gameInfo?.date || ''}${gameType}</div>
     </div>`;
 
-    // Render each team's box score
-    Object.entries(teams).forEach(([teamName, roster]) => {
+    // Render each team's box score (away first, then home)
+    sortedTeams.forEach(([teamName, roster]) => {
         const teamCode = getTeamCode(teamName);
         const teamPts = [...roster.starters, ...roster.bench].reduce((sum, p) => sum + (p.pts || 0), 0);
 
