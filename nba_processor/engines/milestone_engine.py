@@ -217,10 +217,18 @@ class MilestoneEngine:
         home_team = basic_info.get('home_team', '')
         away_team = basic_info.get('away_team', '')
 
-        players = game.get('players', {})
+        # Get players from box_score structure (supports both 'basic' and 'players' keys)
+        box_score = game.get('box_score', {})
+
+        def get_players_for_side(side: str) -> List[Dict]:
+            side_data = box_score.get(side, {})
+            players = side_data.get('players', [])
+            if not players:
+                players = side_data.get('basic', [])
+            return players
 
         # Process away team players
-        for player in players.get('away', []):
+        for player in get_players_for_side('away'):
             self._check_player_milestones(
                 player=player,
                 team=away_team,
@@ -231,7 +239,7 @@ class MilestoneEngine:
             )
 
         # Process home team players
-        for player in players.get('home', []):
+        for player in get_players_for_side('home'):
             self._check_player_milestones(
                 player=player,
                 team=home_team,

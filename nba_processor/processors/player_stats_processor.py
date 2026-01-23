@@ -12,6 +12,7 @@ from ..utils.helpers import (
     is_triple_double, is_double_double, parse_minutes,
     calculate_true_shooting, calculate_effective_fg_pct
 )
+from ..engines.milestone_engine import MilestoneEngine, MILESTONE_DESCRIPTIONS
 
 
 class PlayerStatsProcessor(BaseProcessor):
@@ -53,6 +54,8 @@ class PlayerStatsProcessor(BaseProcessor):
             - 'season_highs': DataFrame with season high performances
             - 'triple_doubles': DataFrame with triple-double games
             - 'double_doubles': DataFrame with double-double games
+            - 'milestones': All milestone data from MilestoneEngine
+            - 'milestone_descriptions': Descriptions for milestone types
         """
         self._aggregate_player_stats()
 
@@ -63,6 +66,11 @@ class PlayerStatsProcessor(BaseProcessor):
         triple_doubles_df = self._create_triple_doubles_dataframe()
         double_doubles_df = self._create_double_doubles_dataframe()
 
+        # Process all milestones using MilestoneEngine
+        milestone_engine = MilestoneEngine()
+        milestone_results = milestone_engine.process_games(self.games)
+        milestones_dict = milestone_results.to_dict()
+
         return {
             'players': players_df,
             'player_games': player_games_df,
@@ -70,6 +78,8 @@ class PlayerStatsProcessor(BaseProcessor):
             'season_highs': season_highs_df,
             'triple_doubles': triple_doubles_df,
             'double_doubles': double_doubles_df,
+            'milestones': milestones_dict,
+            'milestone_descriptions': MILESTONE_DESCRIPTIONS,
         }
 
     def _aggregate_player_stats(self) -> None:

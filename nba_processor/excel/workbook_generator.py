@@ -23,6 +23,8 @@ def generate_excel_workbook(data: Dict[str, pd.DataFrame], output_path: str) -> 
         # Fallback to openpyxl if xlsxwriter not available
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
             for sheet_name, df in data.items():
+                if not isinstance(df, pd.DataFrame):
+                    continue
                 if not df.empty:
                     clean_name = sheet_name.replace('_', ' ').title()[:31]
                     df.to_excel(writer, sheet_name=clean_name, index=False)
@@ -69,6 +71,9 @@ def generate_excel_workbook(data: Dict[str, pd.DataFrame], output_path: str) -> 
     }
 
     for key, df in data.items():
+        # Skip non-DataFrame items (like milestones dict)
+        if not isinstance(df, pd.DataFrame):
+            continue
         if df.empty:
             continue
 
