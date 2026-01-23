@@ -1121,37 +1121,39 @@ tr:hover { background: var(--hover-color); }
 .boxscore-header { text-align: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 2px solid var(--border-color); }
 .boxscore-header .date { color: var(--text-secondary); margin-top: 0.5rem; }
 .boxscore-matchup {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: center;
     gap: 1rem;
     font-size: 1.3rem;
     margin-bottom: 0.25rem;
 }
-.boxscore-team { display: flex; align-items: center; gap: 0.5rem; }
-.boxscore-team strong { font-size: 1.5rem; }
-.boxscore-team.winner { color: var(--success); }
-.boxscore-at { color: var(--text-muted); font-size: 1rem; }
+.boxscore-team-away { text-align: right; }
+.boxscore-team-home { text-align: left; }
+.boxscore-team-away, .boxscore-team-home { display: flex; align-items: center; gap: 0.5rem; }
+.boxscore-team-away { justify-content: flex-end; }
+.boxscore-team-home { justify-content: flex-start; }
+.boxscore-team-away strong, .boxscore-team-home strong { font-size: 1.5rem; }
+.boxscore-team-away.winner, .boxscore-team-home.winner { color: var(--success); }
+.boxscore-at { color: var(--text-muted); font-size: 1rem; text-align: center; }
 .boxscore-section { margin-bottom: 1.5rem; }
 .boxscore-section h4 { margin-bottom: 0.5rem; color: var(--accent-color); }
 
 /* Team-separated box scores */
-.boxscore-team { margin-bottom: 1.5rem; }
-.boxscore-team-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 1rem;
-    background: var(--accent-color);
-    color: white;
-    border-radius: 8px 8px 0 0;
-    margin: 0;
+.boxscore-team-section { margin-bottom: 2rem; }
+.boxscore-team-title {
+    text-align: center;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--accent-color);
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--accent-color);
 }
-.boxscore-team-header .team-total {
-    font-size: 0.9rem;
-    opacity: 0.9;
-}
-.boxscore-table { border-radius: 0 0 8px 8px; overflow: hidden; }
+.boxscore-table { border-radius: 8px; overflow: hidden; table-layout: fixed; width: 100%; }
+.boxscore-table th, .boxscore-table td { text-align: center; padding: 0.5rem 0.4rem; }
+.boxscore-table th:first-child, .boxscore-table td:first-child { text-align: left; width: 140px; }
+.boxscore-table th:not(:first-child), .boxscore-table td:not(:first-child) { width: 50px; }
 .roster-divider {
     background: var(--bg-primary) !important;
 }
@@ -1321,22 +1323,19 @@ function showBoxScore(gameId) {
     let html = `
     <div class="boxscore-header">
         <div class="boxscore-matchup">
-            <span class="boxscore-team ${awayWon ? 'winner' : ''}">${awayTeam} <strong>${awayScore}</strong></span>
+            <span class="boxscore-team-away ${awayWon ? 'winner' : ''}">${awayTeam} <strong>${awayScore}</strong></span>
             <span class="boxscore-at">@</span>
-            <span class="boxscore-team ${!awayWon ? 'winner' : ''}"><strong>${homeScore}</strong> ${homeTeam}</span>
+            <span class="boxscore-team-home ${!awayWon ? 'winner' : ''}"><strong>${homeScore}</strong> ${homeTeam}</span>
         </div>
         <div class="date">${gameInfo?.date || ''}${gameType}</div>
     </div>`;
 
     // Render each team's box score (away first, then home)
     sortedTeams.forEach(([teamName, roster]) => {
-        const teamCode = getTeamCode(teamName);
-        const teamPts = [...roster.starters, ...roster.bench].reduce((sum, p) => sum + (p.pts || 0), 0);
-
         html += `
-        <div class="boxscore-team">
-            <h4 class="boxscore-team-header">${teamName} <span class="team-total">${teamPts} PTS</span></h4>
-            <div class="table-container">
+        <div class="boxscore-team-section">
+            <div class="boxscore-team-title">${teamName}</div>
+            <div class="table-container" style="max-height:none;">
                 <table class="boxscore-table">
                     <thead><tr>
                         <th>Player</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th>
