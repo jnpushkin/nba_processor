@@ -125,6 +125,53 @@ NBA_TEAMS: Dict[str, Dict[str, str]] = {
 # Team code to full name mapping
 TEAM_CODES: Dict[str, str] = {info['code']: name for name, info in NBA_TEAMS.items()}
 
+# NBA Divisions grouped by conference (for checklist tracking)
+NBA_DIVISIONS: Dict[str, List[str]] = {
+    'Atlantic': ['BOS', 'BKN', 'NYK', 'PHI', 'TOR'],
+    'Central': ['CHI', 'CLE', 'DET', 'IND', 'MIL'],
+    'Southeast': ['ATL', 'CHA', 'MIA', 'ORL', 'WAS'],
+    'Northwest': ['DEN', 'MIN', 'OKC', 'POR', 'UTA'],
+    'Pacific': ['GSW', 'LAC', 'LAL', 'PHX', 'SAC'],
+    'Southwest': ['DAL', 'HOU', 'MEM', 'NOP', 'SAS'],
+}
+
+# Conference groupings
+NBA_CONFERENCES: Dict[str, List[str]] = {
+    'East': ['Atlantic', 'Central', 'Southeast'],
+    'West': ['Northwest', 'Pacific', 'Southwest'],
+}
+
+# Division to conference mapping
+DIVISION_TO_CONFERENCE: Dict[str, str] = {
+    'Atlantic': 'East', 'Central': 'East', 'Southeast': 'East',
+    'Northwest': 'West', 'Pacific': 'West', 'Southwest': 'West',
+}
+
+# Team code to division mapping
+TEAM_CODE_TO_DIVISION: Dict[str, str] = {}
+for div, codes in NBA_DIVISIONS.items():
+    for code in codes:
+        TEAM_CODE_TO_DIVISION[code] = div
+
+# Team code aliases (for parsing various abbreviations)
+TEAM_CODE_ALIASES: Dict[str, str] = {
+    # Alternate codes used by different sources
+    'BRK': 'BKN',  # Brooklyn alternate
+    'PHO': 'PHX',  # Phoenix alternate
+    'NJN': 'BKN',  # New Jersey Nets
+    'SEA': 'OKC',  # Seattle SuperSonics
+    'NOH': 'NOP',  # New Orleans Hornets
+    'NOK': 'NOP',  # New Orleans/Oklahoma City Hornets
+    'VAN': 'MEM',  # Vancouver Grizzlies
+    'CHH': 'CHA',  # Charlotte Hornets (old)
+    'CHA': 'CHA',  # Charlotte (current)
+    'CHO': 'CHA',  # Charlotte alternate
+    'WSB': 'WAS',  # Washington Bullets
+    'KCK': 'SAC',  # Kansas City Kings
+    'SDC': 'LAC',  # San Diego Clippers
+    'NYN': 'BKN',  # NY Nets
+}
+
 # Team aliases
 TEAM_ALIASES: Dict[str, str] = {
     # Common abbreviations

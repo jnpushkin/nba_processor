@@ -336,14 +336,21 @@ def extract_basic_info(soup: BeautifulSoup) -> Dict[str, Any]:
             if attendance_match:
                 info['attendance'] = safe_int(attendance_match.group(1).replace(',', ''), None)
 
-    # Detect game type from URL or page content
-    page_text = soup.get_text().lower()
-    if 'playoff' in page_text or 'postseason' in page_text:
+    # Detect game type from specific indicators (not just any mention on the page)
+    # Look for game type in the scorebox or title area specifically
+    scorebox = soup.find('div', class_='scorebox')
+    scorebox_text = scorebox.get_text().lower() if scorebox else ''
+    title_tag = soup.find('title')
+    title_text = title_tag.get_text().lower() if title_tag else ''
+
+    # Check for explicit playoff/postseason indicators in title or scorebox
+    if 'playoff' in title_text or 'postseason' in title_text:
         info['game_type'] = 'playoff'
-    elif 'play-in' in page_text:
+    elif 'play-in' in title_text or 'play-in' in scorebox_text:
         info['game_type'] = 'playin'
-    elif 'preseason' in page_text:
+    elif 'preseason' in title_text or 'preseason' in scorebox_text:
         info['game_type'] = 'preseason'
+    # Otherwise keep default 'regular'
 
     # Also try date from title
     if not info['date']:

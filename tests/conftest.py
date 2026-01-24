@@ -5,8 +5,8 @@ import pytest
 import sys
 from pathlib import Path
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add grandparent directory to path so 'from nba_processor.' finds the root package
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
 @pytest.fixture
@@ -25,6 +25,100 @@ def sample_game_data():
             "date_yyyymmdd": "20240115",
             "venue": "Crypto.com Arena",
             "attendance": "18997"
+        },
+        "box_score": {
+            "away": {"players": [
+                {
+                    "name": "Jayson Tatum",
+                    "player_id": "tatumja01",
+                    "starter": True,
+                    "mp": "38:12",
+                    "pts": 32,
+                    "trb": 10,
+                    "ast": 5,
+                    "stl": 2,
+                    "blk": 1,
+                    "fg": 11,
+                    "fga": 22,
+                    "fg3": 4,
+                    "fg3a": 10,
+                    "ft": 6,
+                    "fta": 7,
+                    "orb": 2,
+                    "drb": 8,
+                    "tov": 3,
+                    "pf": 2,
+                    "plus_minus": 8
+                },
+                {
+                    "name": "Jaylen Brown",
+                    "player_id": "brownja02",
+                    "starter": True,
+                    "mp": "36:45",
+                    "pts": 28,
+                    "trb": 6,
+                    "ast": 4,
+                    "stl": 1,
+                    "blk": 0,
+                    "fg": 10,
+                    "fga": 20,
+                    "fg3": 3,
+                    "fg3a": 8,
+                    "ft": 5,
+                    "fta": 6,
+                    "orb": 1,
+                    "drb": 5,
+                    "tov": 2,
+                    "pf": 3,
+                    "plus_minus": 6
+                }
+            ]},
+            "home": {"players": [
+                {
+                    "name": "LeBron James",
+                    "player_id": "jamesle01",
+                    "starter": True,
+                    "mp": "40:00",
+                    "pts": 35,
+                    "trb": 12,
+                    "ast": 11,
+                    "stl": 2,
+                    "blk": 1,
+                    "fg": 13,
+                    "fga": 24,
+                    "fg3": 3,
+                    "fg3a": 7,
+                    "ft": 6,
+                    "fta": 8,
+                    "orb": 3,
+                    "drb": 9,
+                    "tov": 4,
+                    "pf": 2,
+                    "plus_minus": -3
+                },
+                {
+                    "name": "Anthony Davis",
+                    "player_id": "davisan01",
+                    "starter": True,
+                    "mp": "38:30",
+                    "pts": 25,
+                    "trb": 14,
+                    "ast": 3,
+                    "stl": 1,
+                    "blk": 4,
+                    "fg": 10,
+                    "fga": 18,
+                    "fg3": 0,
+                    "fg3a": 2,
+                    "ft": 5,
+                    "fta": 7,
+                    "orb": 4,
+                    "drb": 10,
+                    "tov": 2,
+                    "pf": 3,
+                    "plus_minus": -5
+                }
+            ]}
         },
         "players": {
             "away": [
