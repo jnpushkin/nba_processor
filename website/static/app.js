@@ -819,6 +819,104 @@ function renderLeaders() {
     }).join('');
 }
 
+// Career Firsts
+function renderCareerFirsts(filter = 'all', search = '') {
+    const container = document.getElementById('career-firsts-container');
+    if (!container) return;
+
+    const firsts = DATA.careerFirsts || [];
+    if (!firsts.length) {
+        container.innerHTML = '<p style="text-align:center;padding:2rem;color:var(--text-muted);">No career firsts found. Run the career firsts scraper to populate this data.</p>';
+        return;
+    }
+
+    // Filter
+    let filtered = firsts;
+    if (filter !== 'all') {
+        filtered = filtered.filter(f => f.category === filter);
+    }
+    if (search) {
+        const searchLower = search.toLowerCase();
+        filtered = filtered.filter(f =>
+            (f.player_name || '').toLowerCase().includes(searchLower) ||
+            (f.milestone || '').toLowerCase().includes(searchLower)
+        );
+    }
+
+    if (!filtered.length) {
+        container.innerHTML = '<p style="text-align:center;padding:2rem;color:var(--text-muted);">No matching career firsts found.</p>';
+        return;
+    }
+
+    // Group by category for display
+    const firstsGroup = filtered.filter(f => f.category === 'first');
+    const milestonesGroup = filtered.filter(f => f.category === 'milestone');
+
+    let html = '';
+
+    if (firstsGroup.length > 0 && (filter === 'all' || filter === 'first')) {
+        html += `
+            <div class="milestone-group">
+                <h3 class="milestone-group-title">🌟 Career Firsts (${firstsGroup.length})</h3>
+                <div class="milestone-cards">
+                    ${firstsGroup.map(f => `
+                        <div class="milestone-card career-first">
+                            <div class="milestone-header">
+                                <span class="milestone-player">${f.player_name || f.player_id}</span>
+                                <span class="milestone-date">${formatCareerFirstDate(f.date)}</span>
+                            </div>
+                            <div class="milestone-detail">${f.milestone}</div>
+                            <div class="milestone-meta">vs ${f.opponent || 'Unknown'}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>`;
+    }
+
+    if (milestonesGroup.length > 0 && (filter === 'all' || filter === 'milestone')) {
+        html += `
+            <div class="milestone-group">
+                <h3 class="milestone-group-title">🏆 Career Milestones (${milestonesGroup.length})</h3>
+                <div class="milestone-cards">
+                    ${milestonesGroup.map(f => `
+                        <div class="milestone-card career-milestone">
+                            <div class="milestone-header">
+                                <span class="milestone-player">${f.player_name || f.player_id}</span>
+                                <span class="milestone-date">${formatCareerFirstDate(f.date)}</span>
+                            </div>
+                            <div class="milestone-detail">${f.milestone}</div>
+                            <div class="milestone-meta">vs ${f.opponent || 'Unknown'}${f.career_total_after ? ` • Career total: ${f.career_total_after.toLocaleString()}` : ''}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>`;
+    }
+
+    container.innerHTML = html || '<p style="text-align:center;padding:2rem;color:var(--text-muted);">No career firsts found.</p>';
+}
+
+function formatCareerFirstDate(dateStr) {
+    if (!dateStr) return '';
+    // Format: YYYYMMDD -> MM/DD/YYYY
+    if (dateStr.length === 8 && /^\d{8}$/.test(dateStr)) {
+        return `${dateStr.slice(4,6)}/${dateStr.slice(6,8)}/${dateStr.slice(0,4)}`;
+    }
+    // Format: YYYY-MM-DD -> MM/DD/YYYY
+    if (dateStr.includes('-')) {
+        const parts = dateStr.split('-');
+        if (parts.length === 3) {
+            return `${parts[1]}/${parts[2]}/${parts[0]}`;
+        }
+    }
+    return dateStr;
+}
+
+function filterCareerFirsts() {
+    const category = document.getElementById('career-firsts-category')?.value || 'all';
+    const search = document.getElementById('career-firsts-search')?.value || '';
+    renderCareerFirsts(category, search);
+}
+
 // Init
 document.addEventListener('DOMContentLoaded', function() {
     renderGamesGrid();
@@ -829,6 +927,7 @@ document.addEventListener('DOMContentLoaded', function() {
     renderTeamChecklist();
     renderVenuesTable();
     renderMilestones();
+    renderCareerFirsts();
 });
 
 document.addEventListener('keydown', e => {

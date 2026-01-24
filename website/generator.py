@@ -16,6 +16,106 @@ from ..utils.constants import (
     TEAM_CODE_TO_DIVISION, TEAM_CODE_ALIASES
 )
 
+
+def _get_project_root() -> Path:
+    """Get the project root directory."""
+    current = Path(__file__).resolve()
+    for parent in [current] + list(current.parents):
+        if (parent / '.project_root').exists():
+            return parent
+        if (parent / 'nba_processor').is_dir() or (parent / '__main__.py').exists():
+            return parent
+    return Path.cwd()
+
+
+def _load_career_firsts_cache() -> dict:
+    """Load the career firsts cache from disk."""
+    cache_file = _get_project_root() / 'cache' / 'career_firsts' / 'career_firsts.json'
+    if cache_file.exists():
+        try:
+            with open(cache_file, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {}
+    return {}
+
+
+def _find_witnessed_career_firsts(games_df: pd.DataFrame, career_firsts_cache: dict) -> List[Dict]:
+    """
+    Find career firsts and milestones that were witnessed at attended games.
+
+    Args:
+        games_df: DataFrame of player games with game_id column
+        career_firsts_cache: Dict mapping player_id to their career firsts/milestones
+
+    Returns:
+        List of witnessed career firsts/milestones
+    """
+    witnessed = []
+
+    if games_df.empty or not career_firsts_cache:
+        return witnessed
+
+    # Build set of attended game IDs
+    attended_game_ids = set()
+    if 'game_id' in games_df.columns:
+        attended_game_ids = set(games_df['game_id'].dropna().unique())
+
+    # Build player name lookup from games
+    player_names = {}
+    if 'player_id' in games_df.columns and 'name' in games_df.columns:
+        for _, row in games_df.iterrows():
+            if row.get('player_id') and row.get('name'):
+                player_names[row['player_id']] = row['name']
+
+    # Check each player's career firsts
+    for player_id, data in career_firsts_cache.items():
+        player_name = data.get('player_name', player_names.get(player_id, player_id))
+
+        # Check firsts (first points, first rebound, etc.)
+        for stat, first_info in data.get('firsts', {}).items():
+            game_id = first_info.get('game_id', '')
+            if game_id in attended_game_ids:
+                witnessed.append({
+                    'player_id': player_id,
+                    'player_name': player_name,
+                    'milestone': first_info.get('milestone', ''),
+                    'stat': stat,
+                    'date': first_info.get('date', ''),
+                    'game_id': game_id,
+                    'opponent': first_info.get('opponent', ''),
+                    'year': first_info.get('year', ''),
+                    'category': 'first',
+                })
+
+        # Check milestones (1000th point, etc.)
+        for stat, milestones_list in data.get('milestones', {}).items():
+            for milestone_info in milestones_list:
+                game_id = milestone_info.get('game_id', '')
+                if game_id in attended_game_ids:
+                    witnessed.append({
+                        'player_id': player_id,
+                        'player_name': player_name,
+                        'milestone': milestone_info.get('milestone', ''),
+                        'milestone_number': milestone_info.get('number', 0),
+                        'stat': stat,
+                        'date': milestone_info.get('date', ''),
+                        'game_id': game_id,
+                        'opponent': milestone_info.get('opponent', ''),
+                        'year': milestone_info.get('year', ''),
+                        'category': 'milestone',
+                        'career_total_after': milestone_info.get('career_total_after', 0),
+                    })
+
+    # Sort by date (most recent first), then by milestone importance
+    def sort_key(x):
+        date = x.get('date', '')
+        milestone_num = x.get('milestone_number', 0)
+        return (date, milestone_num)
+
+    witnessed.sort(key=sort_key, reverse=True)
+    return witnessed
+
 # Path to static assets
 STATIC_DIR = Path(__file__).parent / 'static'
 
@@ -132,6 +232,13 @@ def generate_website_from_data(processed_data: Dict[str, pd.DataFrame], output_p
     team_checklist = _calculate_team_checklist(games_df)
     data['teamChecklist'] = team_checklist
 
+    # Load career firsts and find witnessed ones
+    career_firsts_cache = _load_career_firsts_cache()
+    witnessed_firsts = _find_witnessed_career_firsts(games_df, career_firsts_cache)
+    data['careerFirsts'] = witnessed_firsts
+    if witnessed_firsts:
+        info(f"  Found {len(witnessed_firsts)} witnessed career firsts/milestones")
+
     # Calculate summary stats
     players_df = processed_data.get('players', pd.DataFrame())
 
@@ -152,6 +259,7 @@ def generate_website_from_data(processed_data: Dict[str, pd.DataFrame], output_p
         'citiesVisited': venue_stats['cities_visited'],
         'teamsSeen': team_checklist['summary']['teamsSeen'],
         'totalTeams': 30,
+        'careerFirsts': len(witnessed_firsts),
     }
     data['summary'] = summary
 
@@ -531,6 +639,7 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
             <button class="tab" onclick="showSection('venues')" data-section="venues">Arenas</button>
             <button class="tab" onclick="showSection('map')" data-section="map">Map</button>
             <button class="tab" onclick="showSection('achievements')" data-section="achievements">Achievements</button>
+            <button class="tab" onclick="showSection('career-firsts')" data-section="career-firsts">Career Firsts</button>
         </nav>
 
         <!-- Games Section -->
@@ -650,6 +759,27 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
                 </div>
             </div>
             <div id="milestones-container" class="milestones-container"></div>
+        </div>
+
+        <!-- Career Firsts Section -->
+        <div id="career-firsts" class="section">
+            <h2>Career Firsts & Milestones ({summary.get('careerFirsts', 0)} witnessed)</h2>
+            <p class="section-description">Career milestones you witnessed players achieve - first career points, 1000th career rebound, etc.</p>
+            <div class="milestone-filters">
+                <div class="filter-group">
+                    <label>Category</label>
+                    <select id="career-firsts-category" onchange="filterCareerFirsts()">
+                        <option value="all">All</option>
+                        <option value="first">Career Firsts</option>
+                        <option value="milestone">Career Milestones</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Search Player</label>
+                    <input type="text" id="career-firsts-search" placeholder="Search..." onkeyup="filterCareerFirsts()">
+                </div>
+            </div>
+            <div id="career-firsts-container" class="milestones-container"></div>
         </div>
     </div>
 
