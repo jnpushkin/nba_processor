@@ -8,10 +8,55 @@ import json
 import argparse
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 from .utils.constants import BASE_DIR, DEFAULT_INPUT_DIR, CACHE_DIR, DEFAULT_HTML_OUTPUT, SURGE_DOMAIN
+
+
+def deploy_to_surge(output_html: str) -> bool:
+    """
+    Deploy the website to Surge.
+
+    Args:
+        output_html: Path to the generated HTML file
+
+    Returns:
+        True if deployment succeeded, False otherwise
+    """
+    from .utils.log import info, warn, success
+
+    docs_dir = os.path.dirname(output_html)
+    if not docs_dir:
+        docs_dir = '.'
+
+    info(f"Deploying to {SURGE_DOMAIN}...")
+
+    try:
+        result = subprocess.run(
+            ['surge', docs_dir, SURGE_DOMAIN],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+
+        if result.returncode == 0:
+            success(f"Deployed to https://{SURGE_DOMAIN}")
+            return True
+        else:
+            warn(f"Deployment failed: {result.stderr}")
+            return False
+
+    except FileNotFoundError:
+        warn("Surge CLI not found. Install with: npm install -g surge")
+        return False
+    except subprocess.TimeoutExpired:
+        warn("Deployment timed out")
+        return False
+    except Exception as e:
+        warn(f"Deployment error: {e}")
+        return False
 from .utils.log import info, warn, error, success, debug, set_verbosity, set_use_emoji
 from .parsers.html_parser import parse_basketball_reference_boxscore, HTMLParsingError
 
@@ -232,6 +277,11 @@ def main() -> None:
         help='Skip automatic surge deployment'
     )
     parser.add_argument(
+        '--scrape-firsts',
+        action='store_true',
+        help='Scrape career firsts for new players (not already cached)'
+    )
+    parser.add_argument(
         '--log-file',
         type=str,
         default=None,
@@ -339,11 +389,83 @@ def main() -> None:
                     df.to_csv(csv_path, index=False)
                     info(f"CSV: {csv_path}")
 
+        # Run career firsts scraper if requested (before website generation)
+        if args.scrape_firsts:
+            try:
+                from .scrapers.career_firsts_scraper import (
+                    get_players_from_games,
+                    load_career_firsts_cache,
+                    save_career_firsts_cache,
+                    scrape_career_firsts_for_players,
+                    get_cache_path
+                )
+                info("\nScraping career firsts...")
+
+                # Get all players and games from cache
+                player_ids, player_names = get_players_from_games()
+                cache = load_career_firsts_cache()
+
+                # Track which games we've processed for career firsts
+                processed_games = cache.get('_processed_games', set())
+                if isinstance(processed_games, list):
+                    processed_games = set(processed_games)
+
+                # Get current game IDs from the data we just processed
+                current_game_ids = {g.get('game_id') for g in games_data if g.get('game_id')}
+
+                # Find new games (not yet processed for career firsts)
+                new_game_ids = current_game_ids - processed_games
+
+                if new_game_ids:
+                    info(f"Found {len(new_game_ids)} new games to process")
+
+                    # Get players who played in new games
+                    players_to_refresh = set()
+                    for game in games_data:
+                        if game.get('game_id') in new_game_ids:
+                            box_score = game.get('box_score', {})
+                            for side in ['away', 'home']:
+                                players = box_score.get(side, {}).get('players', [])
+                                for p in players:
+                                    if p.get('player_id'):
+                                        players_to_refresh.add(p['player_id'])
+
+                    # Also add any completely new players not in cache
+                    new_players = player_ids - set(k for k in cache.keys() if not k.startswith('_'))
+                    players_to_refresh.update(new_players)
+
+                    if players_to_refresh:
+                        info(f"Refreshing career firsts for {len(players_to_refresh)} players...")
+                        scrape_career_firsts_for_players(
+                            players_to_refresh,
+                            refresh=True,  # Force refresh for players with new games
+                            delay=3.1,
+                            verbose=True,
+                            player_names=player_names
+                        )
+
+                    # Update processed games
+                    cache = load_career_firsts_cache()  # Reload after scraping
+                    cache['_processed_games'] = list(current_game_ids)
+                    save_career_firsts_cache(cache)
+                else:
+                    info("No new games to process for career firsts")
+
+            except ImportError as e:
+                warn(f"Career firsts scraper not available: {e}")
+            except Exception as e:
+                warn(f"Career firsts scraping failed: {e}")
+
         if generate_website:
             try:
                 from .website.generator import generate_website_from_data
                 generate_website_from_data(player_data, args.output_html)
                 info(f"Website: {os.path.abspath(args.output_html)}")
+
+                # Deploy to Surge unless --no-deploy flag is set
+                if not args.no_deploy:
+                    deploy_to_surge(args.output_html)
+
             except ImportError:
                 warn("Website generation not available")
 

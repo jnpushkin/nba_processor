@@ -16,9 +16,11 @@ Always use `python3` instead of `python` for all commands.
 ## Running the Processor
 ```bash
 cd /Users/jeremypushkin
-python3 -m nba_processor [input_path]            # Process games
+python3 -m nba_processor [input_path]            # Process games (auto-deploys)
 python3 -m nba_processor --website-only          # Skip Excel
 python3 -m nba_processor --from-cache-only       # Use cached data
+python3 -m nba_processor --scrape-firsts         # Also scrape career firsts for players with new games
+python3 -m nba_processor --no-deploy             # Skip Surge deployment
 ```
 
 ## Scraping Career Firsts
@@ -39,7 +41,7 @@ python3 -m pytest tests/ -k milestone # Filter by name
 ```
 
 ## Deployment
-Website deploys to Surge (configured in main.py)
+Website auto-deploys to Surge after generation (use `--no-deploy` to skip). Domain: nba-processor.surge.sh
 
 ## Key Files
 - `engines/milestone_engine.py` - Milestone detection (55+ types)
