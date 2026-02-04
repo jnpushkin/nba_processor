@@ -4,18 +4,18 @@
 Always use `python3` instead of `python` for all commands.
 
 ## Project Structure
-- Root directory IS the `nba_processor` package (no nested `nba_processor/nba_processor/`)
-- `engines/` - Milestone detection engine (55+ milestone types)
-- `parsers/` - Basketball Reference HTML parsing
-- `processors/` - Stats aggregation
-- `scrapers/` - Web scrapers for Basketball Reference
-- `website/` - HTML website generation
+- Root directory contains the `nba_processor/` package (nested structure like mlb_processor)
+- `nba_processor/engines/` - Milestone detection engine (55+ milestone types)
+- `nba_processor/parsers/` - Basketball Reference HTML parsing
+- `nba_processor/processors/` - Stats aggregation
+- `nba_processor/scrapers/` - Web scrapers for Basketball Reference
+- `nba_processor/website/` - HTML website generation
 - `tests/` - Pytest test suite (189 tests)
 - `cache/` - Cached parsed game data and career firsts
 
 ## Running the Processor
 ```bash
-cd /Users/jeremypushkin
+cd /Users/jeremypushkin/nba_processor
 python3 -m nba_processor [input_path]            # Process games (auto-deploys)
 python3 -m nba_processor --website-only          # Skip Excel
 python3 -m nba_processor --from-cache-only       # Use cached data
@@ -25,6 +25,7 @@ python3 -m nba_processor --no-deploy             # Skip Surge deployment
 
 ## Scraping Career Firsts
 ```bash
+cd /Users/jeremypushkin/nba_processor
 python3 -m nba_processor.scrapers.career_firsts_scraper              # All players
 python3 -m nba_processor.scrapers.career_firsts_scraper --player curryst01  # Single player
 python3 -m nba_processor.scrapers.career_firsts_scraper --check-witnessed   # Show witnessed
@@ -44,10 +45,10 @@ python3 -m pytest tests/ -k milestone # Filter by name
 Website auto-deploys to Surge after generation (use `--no-deploy` to skip). Domain: nba-processor.surge.sh
 
 ## Key Files
-- `engines/milestone_engine.py` - Milestone detection (55+ types)
-- `parsers/html_parser.py` - HTML parsing, outputs `box_score` structure
-- `processors/player_stats_processor.py` - Stats aggregation
-- `scrapers/career_firsts_scraper.py` - Career milestone scraper
+- `nba_processor/engines/milestone_engine.py` - Milestone detection (55+ types)
+- `nba_processor/parsers/html_parser.py` - HTML parsing, outputs `box_score` structure
+- `nba_processor/processors/player_stats_processor.py` - Stats aggregation
+- `nba_processor/scrapers/career_firsts_scraper.py` - Career milestone scraper
 - `tests/conftest.py` - Test fixtures
 
 ## Architecture Notes
@@ -67,7 +68,6 @@ When encountering repeated errors or discovering project-specific quirks:
 - Add to "Architecture Notes" if it's a structural insight
 
 ## Do NOT
-- Create nested `nba_processor/nba_processor/` directory structure
 - Use `python` command (always `python3`)
 - Modify test fixtures without including both `box_score` and `players` formats
 - Scrape Basketball Reference faster than 3.1s between requests

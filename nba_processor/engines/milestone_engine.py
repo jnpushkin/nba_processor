@@ -46,6 +46,12 @@ class MilestoneEntry:
     side: str  # 'home' or 'away'
     stats: Dict[str, Any]
     detail: str = ""
+    date_yyyymmdd: str = ""
+
+    def __post_init__(self):
+        # Extract YYYYMMDD from game_id if not provided (game_id format: YYYYMMDD + team)
+        if not self.date_yyyymmdd and self.game_id and len(self.game_id) >= 8:
+            self.date_yyyymmdd = self.game_id[:8]
 
 
 @dataclass
@@ -147,6 +153,7 @@ class MilestoneResults:
                             'opponent': e.opponent,
                             'game_id': e.game_id,
                             'date': e.date,
+                            'date_yyyymmdd': e.date_yyyymmdd,
                             'side': e.side,
                             'stats': e.stats,
                             'detail': e.detail,
