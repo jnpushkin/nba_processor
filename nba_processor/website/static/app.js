@@ -19,6 +19,14 @@ let filteredPlayers = [];
 let playerSortCol = null;
 let playerSortAsc = false;
 
+// Lazy initialization flags
+let recordsInitialized = false;
+let scorigamiInitialized = false;
+let matchupsInitialized = false;
+let calendarInitialized = false;
+let seasonsInitialized = false;
+let divisionsInitialized = false;
+
 // Theme
 function toggleTheme() {
     const html = document.documentElement;
@@ -34,6 +42,52 @@ function toggleTheme() {
         document.documentElement.setAttribute('data-theme', 'dark');
 })();
 
+// URL Deep Linking
+let _suppressURLUpdate = false;
+
+function updateURL(section, params) {
+    if (_suppressURLUpdate) return;
+    let hash = '#' + section;
+    if (params) {
+        const query = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+        if (query) hash += '?' + query;
+    }
+    if (window.location.hash !== hash) {
+        history.pushState(null, '', hash);
+    }
+}
+
+function parseURL() {
+    const hash = window.location.hash.slice(1);
+    if (!hash) return { section: '', params: {} };
+    const [section, queryStr] = hash.split('?');
+    const params = {};
+    if (queryStr) {
+        queryStr.split('&').forEach(pair => {
+            const [k, v] = pair.split('=');
+            if (k) params[k] = decodeURIComponent(v || '');
+        });
+    }
+    return { section, params };
+}
+
+function handleURLNavigation() {
+    const { section, params } = parseURL();
+    if (!section) return;
+    const tab = document.querySelector(`[data-section="${section}"]`);
+    if (!tab) return;
+    _suppressURLUpdate = true;
+    showSection(section);
+    if (params.sub) {
+        if (section === 'records') showRecordsSubTab(params.sub);
+        else if (section === 'matchups') showMatchupsSubTab(params.sub);
+        else if (section === 'calendar') showCalendarSubTab(params.sub);
+    }
+    _suppressURLUpdate = false;
+    if (params.game) showBoxScore(params.game);
+    if (params.player) showPlayerDetail(params.player);
+}
+
 // Sections
 function showSection(id) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -41,6 +95,13 @@ function showSection(id) {
     document.querySelector(`[data-section="${id}"]`).classList.add('active');
     document.getElementById(id).classList.add('active');
     if (id === 'map' && !arenaMap) initMap();
+    if (id === 'records' && !recordsInitialized) { recordsInitialized = true; renderRecords(); renderPlayerRecords(); }
+    if (id === 'scorigami' && !scorigamiInitialized) { scorigamiInitialized = true; renderScorigami(); }
+    if (id === 'matchups' && !matchupsInitialized) { matchupsInitialized = true; renderMatchups(); }
+    if (id === 'calendar' && !calendarInitialized) { calendarInitialized = true; renderCalendar(); }
+    if (id === 'seasons' && !seasonsInitialized) { seasonsInitialized = true; renderSeasonStats(); }
+    if (id === 'divisions' && !divisionsInitialized) { divisionsInitialized = true; renderDivisionProgress(); }
+    updateURL(id);
 }
 
 // Modals
@@ -177,6 +238,33 @@ function showBoxScore(gameId) {
 
         html += '</tbody></table></div></div>';
     });
+
+    // PBP Highlights
+    const pbp = gameInfo?.espnPbpAnalysis;
+    if (pbp) {
+        html += '<div class="boxscore-pbp-highlights"><h4>Play-by-Play Highlights</h4>';
+        if (pbp.biggestComeback && pbp.biggestComeback.deficit > 0) {
+            html += `<div class="pbp-highlight">
+                <span class="pbp-highlight-icon">&#x1F4AA;</span>
+                <span class="pbp-highlight-text">Comeback: ${pbp.biggestComeback.team} overcame a <strong>${pbp.biggestComeback.deficit}-point</strong> deficit</span>
+            </div>`;
+        }
+        const bestRun = (pbp.teamScoringRuns || [])[0];
+        if (bestRun) {
+            html += `<div class="pbp-highlight">
+                <span class="pbp-highlight-icon">&#x1F525;</span>
+                <span class="pbp-highlight-text">${bestRun.team} went on a <strong>${bestRun.points}-0</strong> scoring run</span>
+            </div>`;
+        }
+        const shot = pbp.gameWinningShots?.decisiveShot;
+        if (shot) {
+            html += `<div class="pbp-highlight">
+                <span class="pbp-highlight-icon">&#x1F3AF;</span>
+                <span class="pbp-highlight-text">Decisive shot by <strong>${shot.player}</strong> (Q${shot.period} ${shot.time})</span>
+            </div>`;
+        }
+        html += '</div>';
+    }
 
     detail.innerHTML = html;
     openModal('boxscore-modal');
@@ -917,6 +1005,922 @@ function filterCareerFirsts() {
     renderCareerFirsts(category, search);
 }
 
+// Sub-tab helpers
+function showRecordsSubTab(tabId) {
+    document.querySelectorAll('#records .sub-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('#records .sub-section').forEach(s => s.classList.remove('active'));
+    document.querySelector(`#records .sub-tab[onclick*="${tabId}"]`).classList.add('active');
+    document.getElementById(tabId).classList.add('active');
+    updateURL('records', { sub: tabId });
+}
+
+function showMatchupsSubTab(tabId) {
+    document.querySelectorAll('#matchups .sub-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('#matchups .sub-section').forEach(s => s.classList.remove('active'));
+    document.querySelector(`#matchups .sub-tab[onclick*="${tabId}"]`).classList.add('active');
+    document.getElementById(tabId).classList.add('active');
+    updateURL('matchups', { sub: tabId });
+}
+
+// Records
+function renderRecords() {
+    const games = DATA.games || [];
+    const grid = document.getElementById('game-records-grid');
+    if (!games.length) { grid.innerHTML = '<p style="text-align:center;padding:2rem;color:var(--text-muted);">No games found</p>'; return; }
+
+    // Calculate records
+    const withMargin = games.map(g => ({
+        ...g,
+        margin: Math.abs((g.home_score || 0) - (g.away_score || 0)),
+        combined: (g.home_score || 0) + (g.away_score || 0),
+        winner: (g.home_score || 0) > (g.away_score || 0) ? g.home_team : g.away_team,
+        loser: (g.home_score || 0) > (g.away_score || 0) ? g.away_team : g.home_team,
+        winScore: Math.max(g.home_score || 0, g.away_score || 0),
+        loseScore: Math.min(g.home_score || 0, g.away_score || 0),
+    }));
+
+    const categories = [
+        { title: 'Biggest Blowouts', data: [...withMargin].sort((a,b) => b.margin - a.margin).slice(0,10),
+          render: g => `<td class="rank">${g._rank}</td><td class="game-link" onclick="showBoxScore('${g.game_id}')">${g.date}</td><td>${getTeamCode(g.winner)} ${g.winScore}, ${getTeamCode(g.loser)} ${g.loseScore}</td><td class="num">${g.margin}</td>` },
+        { title: 'Closest Games', data: [...withMargin].sort((a,b) => a.margin - b.margin).slice(0,10),
+          render: g => `<td class="rank">${g._rank}</td><td class="game-link" onclick="showBoxScore('${g.game_id}')">${g.date}</td><td>${getTeamCode(g.winner)} ${g.winScore}, ${getTeamCode(g.loser)} ${g.loseScore}</td><td class="num">${g.margin}</td>` },
+        { title: 'Highest Scoring', data: [...withMargin].sort((a,b) => b.combined - a.combined).slice(0,10),
+          render: g => `<td class="rank">${g._rank}</td><td class="game-link" onclick="showBoxScore('${g.game_id}')">${g.date}</td><td>${getTeamCode(g.away_team)} ${g.away_score} @ ${getTeamCode(g.home_team)} ${g.home_score}</td><td class="num">${g.combined}</td>` },
+        { title: 'Lowest Scoring', data: [...withMargin].sort((a,b) => a.combined - b.combined).slice(0,10),
+          render: g => `<td class="rank">${g._rank}</td><td class="game-link" onclick="showBoxScore('${g.game_id}')">${g.date}</td><td>${getTeamCode(g.away_team)} ${g.away_score} @ ${getTeamCode(g.home_team)} ${g.home_score}</td><td class="num">${g.combined}</td>` },
+        { title: 'Most Points (Single Team)', data: [...withMargin].sort((a,b) => b.winScore - a.winScore).slice(0,10),
+          render: g => `<td class="rank">${g._rank}</td><td class="game-link" onclick="showBoxScore('${g.game_id}')">${g.date}</td><td>${getTeamCode(g.winner)} vs ${getTeamCode(g.loser)}</td><td class="num">${g.winScore}</td>` },
+        { title: 'Fewest Points (Single Team)', data: [...withMargin].sort((a,b) => a.loseScore - b.loseScore).slice(0,10),
+          render: g => `<td class="rank">${g._rank}</td><td class="game-link" onclick="showBoxScore('${g.game_id}')">${g.date}</td><td>${getTeamCode(g.loser)} vs ${getTeamCode(g.winner)}</td><td class="num">${g.loseScore}</td>` },
+    ];
+
+    grid.innerHTML = categories.map(cat => {
+        const rows = cat.data.map((g, i) => { g._rank = i + 1; return `<tr>${cat.render(g)}</tr>`; }).join('');
+        return `<div class="record-item"><h4>${cat.title}</h4><table>${rows}</table></div>`;
+    }).join('');
+
+    // Show PBP records tab if any game has PBP data
+    const hasPbp = games.some(g => g.espnPbpAnalysis);
+    if (hasPbp) {
+        document.getElementById('pbp-records-tab').style.display = '';
+        renderPbpRecords();
+    }
+}
+
+function renderPlayerRecords() {
+    const playerGames = DATA.player_games || [];
+    const grid = document.getElementById('player-records-grid');
+    if (!playerGames.length) { grid.innerHTML = '<p style="text-align:center;padding:2rem;color:var(--text-muted);">No player data</p>'; return; }
+
+    const statCats = [
+        { key: 'pts', title: 'Most Points', label: 'PTS' },
+        { key: 'trb', title: 'Most Rebounds', label: 'REB' },
+        { key: 'ast', title: 'Most Assists', label: 'AST' },
+        { key: 'fg3', title: 'Most 3-Pointers', label: '3PM' },
+        { key: 'stl', title: 'Most Steals', label: 'STL' },
+        { key: 'blk', title: 'Most Blocks', label: 'BLK' },
+    ];
+
+    grid.innerHTML = statCats.map(cat => {
+        const sorted = [...playerGames].filter(p => p[cat.key] != null).sort((a,b) => (b[cat.key] || 0) - (a[cat.key] || 0)).slice(0, 10);
+        const rows = sorted.map((p, i) => {
+            // Format date shorter: "Nov 10, 2021"
+            const d = p.date_yyyymmdd || '';
+            let shortDate = p.date || '';
+            if (d.length === 8) {
+                const dt = new Date(d.slice(0,4) + '-' + d.slice(4,6) + '-' + d.slice(6,8) + 'T12:00:00');
+                if (!isNaN(dt)) shortDate = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            }
+            return `<tr>
+            <td class="rank">${i+1}</td>
+            <td><span class="player-link" onclick="showPlayerDetail('${(p.player||'').replace(/'/g, "\\'")}')">${p.player}</span></td>
+            <td>${shortDate}</td>
+            <td>${getTeamCode(p.team || '')}</td>
+            <td class="num">${p[cat.key]}</td>
+        </tr>`;
+        }).join('');
+        return `<div class="record-item player-record"><h4>${cat.title}</h4><table><colgroup><col style="width:24px"><col><col style="width:100px"><col style="width:36px"><col style="width:32px"></colgroup>${rows}</table></div>`;
+    }).join('');
+}
+
+function renderPbpRecords() {
+    const games = DATA.games || [];
+    const grid = document.getElementById('pbp-records-grid');
+    const pbpGames = games.filter(g => g.espnPbpAnalysis);
+    if (!pbpGames.length) { grid.innerHTML = '<p style="text-align:center;padding:2rem;color:var(--text-muted);">No PBP data available</p>'; return; }
+
+    // Biggest Comebacks
+    const comebacks = pbpGames
+        .filter(g => g.espnPbpAnalysis.biggestComeback && g.espnPbpAnalysis.biggestComeback.deficit > 0)
+        .map(g => ({ ...g, comeback: g.espnPbpAnalysis.biggestComeback }))
+        .sort((a,b) => b.comeback.deficit - a.comeback.deficit)
+        .slice(0, 10);
+
+    // Largest Scoring Runs
+    const runs = [];
+    pbpGames.forEach(g => {
+        (g.espnPbpAnalysis.teamScoringRuns || []).forEach(r => {
+            runs.push({ ...r, game: g });
+        });
+    });
+    runs.sort((a,b) => b.points - a.points);
+
+    // Player Streaks
+    const streaks = [];
+    pbpGames.forEach(g => {
+        (g.espnPbpAnalysis.playerPointStreaks || []).forEach(s => {
+            streaks.push({ ...s, game: g });
+        });
+    });
+    streaks.sort((a,b) => b.points - a.points);
+
+    // Decisive Shots
+    const shots = pbpGames
+        .filter(g => g.espnPbpAnalysis.gameWinningShots && g.espnPbpAnalysis.gameWinningShots.decisiveShot)
+        .map(g => ({ ...g, shot: g.espnPbpAnalysis.gameWinningShots.decisiveShot }));
+
+    let html = '';
+
+    if (comebacks.length) {
+        const rows = comebacks.map((g, i) => `<tr>
+            <td class="rank">${i+1}</td>
+            <td class="game-link" onclick="showBoxScore('${g.game_id}')">${g.date}</td>
+            <td>${g.comeback.team}</td>
+            <td class="num">${g.comeback.deficit} pts</td>
+        </tr>`).join('');
+        html += `<div class="record-item pbp-record"><h4>Biggest Comebacks</h4><table>${rows}</table></div>`;
+    }
+
+    if (runs.length) {
+        const rows = runs.slice(0, 10).map((r, i) => `<tr>
+            <td class="rank">${i+1}</td>
+            <td class="game-link" onclick="showBoxScore('${r.game.game_id}')">${r.game.date}</td>
+            <td>${r.team}</td>
+            <td class="num">${r.points}-0 run</td>
+        </tr>`).join('');
+        html += `<div class="record-item pbp-record"><h4>Largest Scoring Runs</h4><table>${rows}</table></div>`;
+    }
+
+    if (streaks.length) {
+        const rows = streaks.slice(0, 10).map((s, i) => `<tr>
+            <td class="rank">${i+1}</td>
+            <td class="game-link" onclick="showBoxScore('${s.game.game_id}')">${s.game.date}</td>
+            <td>${s.player} (${s.team})</td>
+            <td class="num">${s.points} pts</td>
+        </tr>`).join('');
+        html += `<div class="record-item pbp-record"><h4>Longest Player Scoring Streaks</h4><table>${rows}</table></div>`;
+    }
+
+    if (shots.length) {
+        const sorted = [...shots].sort((a,b) => {
+            const aPeriod = a.shot.period || 0;
+            const bPeriod = b.shot.period || 0;
+            if (aPeriod !== bPeriod) return bPeriod - aPeriod;
+            return (a.shot.time || '').localeCompare(b.shot.time || '');
+        }).slice(0, 10);
+        const rows = sorted.map((g, i) => `<tr>
+            <td class="rank">${i+1}</td>
+            <td class="game-link" onclick="showBoxScore('${g.game_id}')">${g.date}</td>
+            <td>${g.shot.player} (${g.shot.team})</td>
+            <td class="num">Q${g.shot.period} ${g.shot.time}</td>
+        </tr>`).join('');
+        html += `<div class="record-item pbp-record"><h4>Decisive Shots</h4><table>${rows}</table></div>`;
+    }
+
+    grid.innerHTML = html || '<p style="text-align:center;padding:2rem;color:var(--text-muted);">No PBP records available</p>';
+}
+
+// Scorigami
+function renderScorigami() {
+    const games = DATA.games || [];
+    const statsDiv = document.getElementById('scorigami-stats');
+    const gridEl = document.getElementById('scorigami-grid');
+    if (!games.length) { gridEl.innerHTML = '<tr><td>No games</td></tr>'; return; }
+
+    // Build score map: winScore-loseScore -> [games]
+    const scoreMap = {};
+    let minWin = 999, maxWin = 0, minLose = 999, maxLose = 0;
+
+    games.forEach(g => {
+        const high = Math.max(g.home_score || 0, g.away_score || 0);
+        const low = Math.min(g.home_score || 0, g.away_score || 0);
+        if (high === 0 && low === 0) return;
+        const key = `${high}-${low}`;
+        if (!scoreMap[key]) scoreMap[key] = [];
+        scoreMap[key].push(g);
+        minWin = Math.min(minWin, high);
+        maxWin = Math.max(maxWin, high);
+        minLose = Math.min(minLose, low);
+        maxLose = Math.max(maxLose, low);
+    });
+
+    const uniqueScores = Object.keys(scoreMap).length;
+    const totalGames = games.length;
+    const maxFreq = Math.max(...Object.values(scoreMap).map(v => v.length));
+
+    // Stats summary
+    statsDiv.innerHTML = `
+        <div class="scorigami-stat"><div class="number">${totalGames}</div><div class="label">Total Games</div></div>
+        <div class="scorigami-stat"><div class="number">${uniqueScores}</div><div class="label">Unique Scores</div></div>
+        <div class="scorigami-stat"><div class="number">${maxFreq}</div><div class="label">Most Repeated</div></div>
+    `;
+
+    // Round boundaries for better grid
+    minWin = Math.floor(minWin / 5) * 5;
+    maxWin = Math.ceil(maxWin / 5) * 5;
+    minLose = Math.floor(minLose / 5) * 5;
+    maxLose = Math.ceil(maxLose / 5) * 5;
+
+    // Build grid: rows = winner score, cols = loser score
+    let html = '<thead><tr><th></th>';
+    for (let l = minLose; l <= maxLose; l++) {
+        html += `<th>${l}</th>`;
+    }
+    html += '</tr></thead><tbody>';
+
+    for (let w = minWin; w <= maxWin; w++) {
+        html += `<tr><td class="row-header">${w}</td>`;
+        for (let l = minLose; l <= maxLose; l++) {
+            if (l >= w) {
+                html += '<td></td>';
+                continue;
+            }
+            const key = `${w}-${l}`;
+            const count = scoreMap[key] ? scoreMap[key].length : 0;
+            if (count === 0) {
+                html += '<td></td>';
+            } else {
+                const freq = count >= 5 ? 5 : count >= 4 ? 4 : count >= 3 ? 3 : count >= 2 ? 2 : 1;
+                html += `<td class="has-score freq-${freq}" data-key="${key}" onmouseenter="showScorigamiTooltip(event,'${key}')" onmouseleave="hideScorigamiTooltip()" onclick="showScorigamiGames('${key}')">${count}</td>`;
+            }
+        }
+        html += '</tr>';
+    }
+    html += '</tbody>';
+    gridEl.innerHTML = html;
+}
+
+// Scorigami helpers stored for tooltip
+const _scorigamiMap = {};
+function _buildScorigamiMap() {
+    const games = DATA.games || [];
+    games.forEach(g => {
+        const high = Math.max(g.home_score || 0, g.away_score || 0);
+        const low = Math.min(g.home_score || 0, g.away_score || 0);
+        if (high === 0 && low === 0) return;
+        const key = `${high}-${low}`;
+        if (!_scorigamiMap[key]) _scorigamiMap[key] = [];
+        _scorigamiMap[key].push(g);
+    });
+}
+
+function showScorigamiTooltip(event, key) {
+    if (!Object.keys(_scorigamiMap).length) _buildScorigamiMap();
+    const games = _scorigamiMap[key] || [];
+    if (!games.length) return;
+    const tooltip = document.getElementById('scorigami-tooltip');
+    const parts = key.split('-');
+    let html = `<strong>${parts[0]}-${parts[1]}</strong> (${games.length} game${games.length > 1 ? 's' : ''})<br>`;
+    games.slice(0, 5).forEach(g => {
+        html += `${g.date}: ${getTeamCode(g.away_team)} ${g.away_score} @ ${getTeamCode(g.home_team)} ${g.home_score}<br>`;
+    });
+    if (games.length > 5) html += `<em>...and ${games.length - 5} more</em>`;
+    tooltip.innerHTML = html;
+    tooltip.style.left = (event.clientX + 10) + 'px';
+    tooltip.style.top = (event.clientY + 10) + 'px';
+    tooltip.classList.add('visible');
+}
+
+function hideScorigamiTooltip() {
+    document.getElementById('scorigami-tooltip').classList.remove('visible');
+}
+
+function showScorigamiGames(key) {
+    if (!Object.keys(_scorigamiMap).length) _buildScorigamiMap();
+    const games = _scorigamiMap[key] || [];
+    if (!games.length) return;
+    if (games.length === 1) { showBoxScore(games[0].game_id); return; }
+    const parts = key.split('-');
+    let html = `<h3>Score: ${parts[0]}-${parts[1]} (${games.length} games)</h3><div class="day-games-list">`;
+    games.forEach(g => {
+        html += `<div class="day-game-item" onclick="closeModal('day-games-modal');showBoxScore('${g.game_id}')">
+            <div class="matchup">${getTeamCode(g.away_team)} @ ${getTeamCode(g.home_team)}</div>
+            <div class="score">${g.away_score} - ${g.home_score} | ${g.date}</div>
+        </div>`;
+    });
+    html += '</div>';
+    document.getElementById('day-games-detail').innerHTML = html;
+    openModal('day-games-modal');
+}
+
+// Calendar
+function renderCalendar() {
+    const games = DATA.games || [];
+    const container = document.getElementById('calendar-grid');
+    if (!games.length) { container.innerHTML = '<p style="text-align:center;padding:2rem;color:var(--text-muted);">No games found</p>'; return; }
+
+    // Group games by month-day (year agnostic): key = "MM-DD"
+    const gamesByMonthDay = {};
+    const monthsWithGames = new Set();
+    games.forEach(g => {
+        const d = g.date_yyyymmdd || '';
+        if (d.length < 8) return;
+        const mm = d.slice(4, 6);
+        const dd = d.slice(6, 8);
+        const key = `${mm}-${dd}`;
+        if (!gamesByMonthDay[key]) gamesByMonthDay[key] = [];
+        gamesByMonthDay[key].push(g);
+        monthsWithGames.add(parseInt(mm));
+    });
+
+    // NBA season ordering: Oct=10, Nov=11, Dec=12, Jan=1, ..., Jun=6
+    const seasonOrder = [10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    const monthsToShow = seasonOrder.filter(m => monthsWithGames.has(m));
+
+    const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+                         'July', 'August', 'September', 'October', 'November', 'December'];
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    // Count progress: days with games vs total season days
+    let totalDays = 0, daysWithGames = 0;
+    monthsToShow.forEach(month => {
+        const daysInMonth = new Date(2024, month, 0).getDate();
+        for (let d = 1; d <= daysInMonth; d++) {
+            totalDays++;
+            const key = `${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            if (gamesByMonthDay[key]) daysWithGames++;
+        }
+    });
+
+    let html = `<div class="calendar-progress" style="margin-bottom:1.5rem;text-align:center;">
+        <div style="margin-bottom:0.5rem;font-size:1.1rem;"><strong>${daysWithGames}</strong> of <strong>${totalDays}</strong> calendar days with a game (${(daysWithGames/totalDays*100).toFixed(1)}%)</div>
+        <div style="height:24px;background:var(--bg-secondary);border-radius:12px;overflow:hidden;border:1px solid var(--border-color);">
+            <div style="height:100%;width:${(daysWithGames/totalDays*100)}%;background:linear-gradient(90deg,var(--accent-color),#27ae60);border-radius:12px;transition:width 0.3s ease;"></div>
+        </div>
+    </div>`;
+
+    html += '<div class="calendar-months">';
+
+    monthsToShow.forEach(month => {
+        const mm = String(month).padStart(2, '0');
+        // Use 2024 as reference year for day-of-week layout (leap year, covers Feb 29)
+        const daysInMonth = new Date(2024, month, 0).getDate();
+        const firstDay = new Date(2024, month - 1, 1).getDay();
+
+        let days = '';
+        for (let i = 0; i < firstDay; i++) {
+            days += '<div class="calendar-day"></div>';
+        }
+        for (let d = 1; d <= daysInMonth; d++) {
+            const key = `${mm}-${String(d).padStart(2, '0')}`;
+            const dayGames = gamesByMonthDay[key] || [];
+            const count = dayGames.length;
+            let cls = 'calendar-day';
+            if (count > 1) cls += ' has-multiple';
+            else if (count === 1) cls += ' has-game';
+            const onclick = count > 0 ? ` onclick="showCalendarDay('${key}')"` : '';
+            const years = dayGames.map(g => g.date_yyyymmdd.slice(0, 4));
+            const uniqueYears = [...new Set(years)].sort();
+            const title = count > 0 ? ` title="${count} game${count > 1 ? 's' : ''} (${uniqueYears.join(', ')})"` : '';
+            days += `<div class="${cls}"${onclick}${title}>${d}</div>`;
+        }
+
+        return html += `<div class="calendar-month">
+            <h4>${monthNames[month]}</h4>
+            <div class="calendar-weekdays">${dayNames.map(d => `<div>${d}</div>`).join('')}</div>
+            <div class="calendar-days">${days}</div>
+        </div>`;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function showCalendarDay(monthDayKey) {
+    const games = DATA.games || [];
+    // monthDayKey is "MM-DD"
+    const mm = monthDayKey.slice(0, 2);
+    const dd = monthDayKey.slice(3, 5);
+    const dayGames = games.filter(g => {
+        const d = g.date_yyyymmdd || '';
+        return d.slice(4, 6) === mm && d.slice(6, 8) === dd;
+    });
+    if (!dayGames.length) return;
+    if (dayGames.length === 1) { showBoxScore(dayGames[0].game_id); return; }
+
+    const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+                         'July', 'August', 'September', 'October', 'November', 'December'];
+    let html = `<h3>Games on ${monthNames[parseInt(mm)]} ${parseInt(dd)}</h3><div class="day-games-list">`;
+    dayGames.sort((a, b) => (a.date_yyyymmdd || '').localeCompare(b.date_yyyymmdd || ''));
+    dayGames.forEach(g => {
+        const year = (g.date_yyyymmdd || '').slice(0, 4);
+        html += `<div class="day-game-item" onclick="closeModal('day-games-modal');showBoxScore('${g.game_id}')">
+            <span class="day-game-year">${year}</span>
+            <div class="day-game-matchup">${getTeamCode(g.away_team)} @ ${getTeamCode(g.home_team)}</div>
+            <div class="day-game-score">${g.away_score} - ${g.home_score}</div>
+        </div>`;
+    });
+    html += '</div>';
+    document.getElementById('day-games-detail').innerHTML = html;
+    openModal('day-games-modal');
+}
+
+// Matchups
+function renderMatchups() {
+    renderTeamMatrix();
+    populateH2HDropdowns();
+}
+
+function renderTeamMatrix() {
+    const games = DATA.games || [];
+    const container = document.getElementById('matchup-matrix-container');
+    if (!games.length) { container.innerHTML = '<p style="text-align:center;padding:2rem;color:var(--text-muted);">No games found</p>'; return; }
+
+    // Build H2H records
+    const h2h = {}; // teamA -> teamB -> { wins, losses }
+    const teamsSet = new Set();
+
+    games.forEach(g => {
+        const away = getTeamCode(g.away_team);
+        const home = getTeamCode(g.home_team);
+        if (!away || !home) return;
+        teamsSet.add(away);
+        teamsSet.add(home);
+
+        if (!h2h[away]) h2h[away] = {};
+        if (!h2h[home]) h2h[home] = {};
+        if (!h2h[away][home]) h2h[away][home] = { wins: 0, losses: 0 };
+        if (!h2h[home][away]) h2h[home][away] = { wins: 0, losses: 0 };
+
+        if ((g.away_score || 0) > (g.home_score || 0)) {
+            h2h[away][home].wins++;
+            h2h[home][away].losses++;
+        } else {
+            h2h[home][away].wins++;
+            h2h[away][home].losses++;
+        }
+    });
+
+    const teams = [...teamsSet].sort();
+
+    let html = '<table class="matchup-matrix"><thead><tr><th></th>';
+    teams.forEach(t => { html += `<th>${t}</th>`; });
+    html += '</tr></thead><tbody>';
+
+    teams.forEach(row => {
+        html += `<tr><td class="row-header">${row}</td>`;
+        teams.forEach(col => {
+            if (row === col) {
+                html += '<td class="self-cell">-</td>';
+            } else {
+                const record = h2h[row] && h2h[row][col] ? h2h[row][col] : { wins: 0, losses: 0 };
+                const total = record.wins + record.losses;
+                if (total === 0) {
+                    html += '<td>-</td>';
+                } else {
+                    let cls = '';
+                    if (record.wins > record.losses) cls = 'win-record';
+                    else if (record.losses > record.wins) cls = 'loss-record';
+                    else cls = 'split-record';
+                    html += `<td class="${cls}">${record.wins}-${record.losses}</td>`;
+                }
+            }
+        });
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+function populateH2HDropdowns() {
+    const games = DATA.games || [];
+    const teamsSet = new Set();
+    games.forEach(g => {
+        if (g.away_team) teamsSet.add(g.away_team);
+        if (g.home_team) teamsSet.add(g.home_team);
+    });
+    const teams = [...teamsSet].sort();
+
+    ['h2h-team1', 'h2h-team2'].forEach((id, idx) => {
+        const sel = document.getElementById(id);
+        sel.innerHTML = '<option value="">Select Team</option>' +
+            teams.map(t => `<option value="${t}">${t}</option>`).join('');
+    });
+}
+
+function renderH2H() {
+    const team1 = document.getElementById('h2h-team1').value;
+    const team2 = document.getElementById('h2h-team2').value;
+    const container = document.getElementById('h2h-results');
+    if (!team1 || !team2 || team1 === team2) {
+        container.innerHTML = '<p style="text-align:center;padding:2rem;color:var(--text-muted);">Select two different teams</p>';
+        return;
+    }
+
+    const games = (DATA.games || []).filter(g =>
+        (g.away_team === team1 && g.home_team === team2) ||
+        (g.away_team === team2 && g.home_team === team1)
+    );
+
+    if (!games.length) {
+        container.innerHTML = `<p style="text-align:center;padding:2rem;color:var(--text-muted);">No matchups found between ${getTeamCode(team1)} and ${getTeamCode(team2)}</p>`;
+        return;
+    }
+
+    let t1Wins = 0, t2Wins = 0;
+    games.forEach(g => {
+        const winner = (g.home_score || 0) > (g.away_score || 0) ? g.home_team : g.away_team;
+        if (winner === team1) t1Wins++;
+        else t2Wins++;
+    });
+
+    let html = `<div class="h2h-summary">
+        <div class="h2h-team">
+            <div class="team-name">${getTeamCode(team1)}</div>
+            <div class="wins ${t1Wins > t2Wins ? 'leading' : ''}">${t1Wins}</div>
+        </div>
+        <div style="display:flex;align-items:center;font-size:1.5rem;color:var(--text-muted);">vs</div>
+        <div class="h2h-team">
+            <div class="team-name">${getTeamCode(team2)}</div>
+            <div class="wins ${t2Wins > t1Wins ? 'leading' : ''}">${t2Wins}</div>
+        </div>
+    </div>`;
+
+    html += '<div class="table-container"><table><thead><tr><th>Date</th><th>Away</th><th>Score</th><th>Home</th><th>Score</th></tr></thead><tbody>';
+    const sorted = [...games].sort((a,b) => (b.date_yyyymmdd || '').localeCompare(a.date_yyyymmdd || ''));
+    sorted.forEach(g => {
+        const awayWon = (g.away_score || 0) > (g.home_score || 0);
+        html += `<tr class="game-link" onclick="showBoxScore('${g.game_id}')" style="cursor:pointer;">
+            <td>${g.date}</td>
+            <td style="${awayWon ? 'font-weight:700;color:var(--success);' : ''}">${getTeamCode(g.away_team)}</td>
+            <td class="num" style="${awayWon ? 'font-weight:700;color:var(--success);' : ''}">${g.away_score}</td>
+            <td style="${!awayWon ? 'font-weight:700;color:var(--success);' : ''}">${getTeamCode(g.home_team)}</td>
+            <td class="num" style="${!awayWon ? 'font-weight:700;color:var(--success);' : ''}">${g.home_score}</td>
+        </tr>`;
+    });
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
+
+// Season Stats
+let seasonChart = null;
+
+function getNbaSeason(dateStr) {
+    // dateStr is YYYYMMDD. NBA season: Oct-Jun. Oct 2024 through Jun 2025 = "2024-25"
+    if (!dateStr || dateStr.length < 6) return 'Unknown';
+    const year = parseInt(dateStr.slice(0, 4));
+    const month = parseInt(dateStr.slice(4, 6));
+    // Oct-Dec: season starts this year. Jan-Sep: season started previous year.
+    const startYear = month >= 10 ? year : year - 1;
+    const endYear = startYear + 1;
+    return `${startYear}-${String(endYear).slice(2)}`;
+}
+
+function renderSeasonStats() {
+    const games = DATA.games || [];
+    const playerGames = DATA.player_games || [];
+    if (!games.length) return;
+
+    // Aggregate by season
+    const seasonData = {};
+    games.forEach(g => {
+        const season = getNbaSeason(g.date_yyyymmdd || '');
+        if (!seasonData[season]) seasonData[season] = { games: 0, teams: new Set(), arenas: new Set(), players: new Set() };
+        seasonData[season].games++;
+        if (g.away_team) seasonData[season].teams.add(g.away_team);
+        if (g.home_team) seasonData[season].teams.add(g.home_team);
+        // Extract arena from game_id (home team code)
+        if (g.game_id && g.game_id.length >= 12) {
+            seasonData[season].arenas.add(g.game_id.slice(9, 12));
+        }
+    });
+
+    playerGames.forEach(pg => {
+        const season = getNbaSeason(pg.date_yyyymmdd || '');
+        if (seasonData[season] && pg.player) {
+            seasonData[season].players.add(pg.player);
+        }
+    });
+
+    // Sort seasons chronologically
+    const seasons = Object.keys(seasonData).sort((a, b) => {
+        const aYear = parseInt(a.split('-')[0]);
+        const bYear = parseInt(b.split('-')[0]);
+        return aYear - bYear;
+    });
+
+    const stats = seasons.map(s => ({
+        season: s,
+        games: seasonData[s].games,
+        teams: seasonData[s].teams.size,
+        arenas: seasonData[s].arenas.size,
+        players: seasonData[s].players.size,
+    }));
+
+    // Chart
+    const ctx = document.getElementById('season-chart');
+    if (ctx && stats.length > 1) {
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const gridColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+        const textColor = isDark ? '#b0b0b0' : '#666666';
+
+        if (seasonChart) seasonChart.destroy();
+        seasonChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: stats.map(s => s.season),
+                datasets: [{
+                    label: 'Games',
+                    data: stats.map(s => s.games),
+                    backgroundColor: 'rgba(74, 158, 255, 0.6)',
+                    borderColor: 'rgba(74, 158, 255, 1)',
+                    borderWidth: 1,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { color: gridColor }, ticks: { color: textColor } },
+                    y: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: textColor, stepSize: 1 } }
+                }
+            }
+        });
+    }
+
+    // Summary
+    const summaryDiv = document.getElementById('season-summary');
+    if (summaryDiv && stats.length > 0) {
+        const totalGames = stats.reduce((sum, s) => sum + s.games, 0);
+        const avgPerSeason = Math.round(totalGames / stats.length);
+        const bestSeason = stats.reduce((best, s) => s.games > best.games ? s : best, stats[0]);
+        summaryDiv.innerHTML = `
+            <div class="season-summary-card"><div class="number">${stats.length}</div><div class="label">Seasons</div></div>
+            <div class="season-summary-card"><div class="number">${totalGames}</div><div class="label">Total Games</div></div>
+            <div class="season-summary-card"><div class="number">${avgPerSeason}</div><div class="label">Avg/Season</div></div>
+            <div class="season-summary-card"><div class="number">${bestSeason.season}</div><div class="label">Best Season (${bestSeason.games})</div></div>
+        `;
+    }
+
+    // Table
+    const tbody = document.querySelector('#season-table tbody');
+    if (tbody) {
+        tbody.innerHTML = stats.map(s => `<tr>
+            <td>${s.season}</td>
+            <td class="num">${s.games}</td>
+            <td class="num">${s.teams}</td>
+            <td class="num">${s.arenas}</td>
+            <td class="num">${s.players}</td>
+        </tr>`).join('');
+    }
+}
+
+// Calendar Sub-tabs
+let onThisDayInitialized = false;
+
+function showCalendarSubTab(subId) {
+    document.querySelectorAll('#calendar .sub-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('#calendar .sub-section').forEach(s => s.classList.remove('active'));
+    document.querySelector(`#calendar .sub-tab[onclick*="${subId}"]`).classList.add('active');
+    document.getElementById(subId).classList.add('active');
+    if (subId === 'calendar-onthisday' && !onThisDayInitialized) {
+        onThisDayInitialized = true;
+        renderOnThisDay();
+    }
+    updateURL('calendar', { sub: subId });
+}
+
+function renderOnThisDay() {
+    const games = DATA.games || [];
+    const today = new Date();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+                         'July', 'August', 'September', 'October', 'November', 'December'];
+    document.getElementById('onthisday-date').textContent =
+        `${monthNames[parseInt(mm)]} ${parseInt(dd)}`;
+
+    const matchingGames = games.filter(g => {
+        const d = g.date_yyyymmdd || '';
+        return d.length >= 8 && d.slice(4, 6) === mm && d.slice(6, 8) === dd;
+    });
+
+    const contentEl = document.getElementById('onthisday-content');
+    const emptyEl = document.getElementById('onthisday-empty');
+
+    if (!matchingGames.length) {
+        contentEl.innerHTML = '';
+        emptyEl.style.display = 'block';
+        return;
+    }
+
+    emptyEl.style.display = 'none';
+    const byYear = {};
+    matchingGames.forEach(g => {
+        const year = (g.date_yyyymmdd || '').slice(0, 4);
+        if (!byYear[year]) byYear[year] = [];
+        byYear[year].push(g);
+    });
+
+    const currentYear = today.getFullYear();
+    let html = '';
+    Object.keys(byYear).sort((a, b) => b - a).forEach(year => {
+        const yearsAgo = currentYear - parseInt(year);
+        const agoLabel = yearsAgo === 0 ? 'This year' : yearsAgo === 1 ? '1 year ago' : `${yearsAgo} years ago`;
+        html += `<div style="margin-bottom:1.5rem;">
+            <div style="display:flex;align-items:baseline;gap:0.75rem;margin-bottom:0.75rem;">
+                <h4 style="color:var(--accent-color);margin:0;">${year}</h4>
+                <span style="color:var(--text-muted);font-size:0.85rem;">${agoLabel}</span>
+            </div>`;
+        byYear[year].forEach(g => {
+            html += `<div class="day-game-item" onclick="showBoxScore('${g.game_id}')">
+                <div class="day-game-matchup">${getTeamCode(g.away_team)} ${g.away_score} @ ${getTeamCode(g.home_team)} ${g.home_score}</div>
+            </div>`;
+        });
+        html += '</div>';
+    });
+    contentEl.innerHTML = html;
+}
+
+// Global Search
+let _searchTimeout = null;
+
+function handleGlobalSearch(event) {
+    if (event.key === 'Escape') {
+        hideGlobalSearchResults();
+        event.target.blur();
+        return;
+    }
+    clearTimeout(_searchTimeout);
+    const query = event.target.value.trim();
+    if (query.length < 2) { hideGlobalSearchResults(); return; }
+    if (event.key === 'Enter') {
+        const first = document.querySelector('.search-result-item');
+        if (first) first.click();
+        return;
+    }
+    _searchTimeout = setTimeout(() => {
+        const results = performGlobalSearch(query);
+        renderGlobalSearchResults(results);
+    }, 150);
+}
+
+function performGlobalSearch(query) {
+    const q = query.toLowerCase();
+    const results = { games: [], players: [], arenas: [] };
+    (DATA.games || []).forEach(g => {
+        if (results.games.length >= 5) return;
+        if ((g.away_team || '').toLowerCase().includes(q) ||
+            (g.home_team || '').toLowerCase().includes(q) ||
+            (g.date || '').toLowerCase().includes(q)) {
+            results.games.push(g);
+        }
+    });
+    (DATA.players || []).forEach(p => {
+        if (results.players.length >= 5) return;
+        if ((p.Player || '').toLowerCase().includes(q) ||
+            (p.Team || '').toLowerCase().includes(q)) {
+            results.players.push(p);
+        }
+    });
+    (DATA.venues || []).forEach(v => {
+        if (results.arenas.length >= 5) return;
+        if ((v.name || '').toLowerCase().includes(q) ||
+            (v.team || '').toLowerCase().includes(q) ||
+            (v.city || '').toLowerCase().includes(q)) {
+            results.arenas.push(v);
+        }
+    });
+    return results;
+}
+
+function renderGlobalSearchResults(results) {
+    const container = document.getElementById('global-search-results');
+    const hasResults = results.games.length || results.players.length || results.arenas.length;
+    if (!hasResults) {
+        container.innerHTML = '<div class="search-no-results">No results found</div>';
+        container.style.display = 'block';
+        return;
+    }
+    let html = '';
+    if (results.games.length) {
+        html += '<div class="search-category"><div class="search-category-label">Games</div>';
+        results.games.forEach(g => {
+            html += `<div class="search-result-item" onclick="selectGlobalSearchResult('game','${g.game_id}')">
+                <span>${getTeamCode(g.away_team)} @ ${getTeamCode(g.home_team)} (${g.away_score}-${g.home_score})</span>
+                <span class="search-result-meta">${g.date}</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+    if (results.players.length) {
+        html += '<div class="search-category"><div class="search-category-label">Players</div>';
+        results.players.forEach(p => {
+            const safeName = (p.Player || '').replace(/'/g, "\\'");
+            html += `<div class="search-result-item" onclick="selectGlobalSearchResult('player','${safeName}')">
+                <span>${p.Player}</span>
+                <span class="search-result-meta">${getTeamCode(p.Team)} | ${p.Games || 0}G</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+    if (results.arenas.length) {
+        html += '<div class="search-category"><div class="search-category-label">Arenas</div>';
+        results.arenas.forEach(v => {
+            html += `<div class="search-result-item" onclick="selectGlobalSearchResult('arena','${v.code}')">
+                <span>${v.name}</span>
+                <span class="search-result-meta">${v.team}</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+    container.innerHTML = html;
+    container.style.display = 'block';
+}
+
+function selectGlobalSearchResult(type, id) {
+    hideGlobalSearchResults();
+    document.getElementById('global-search').value = '';
+    if (type === 'game') showBoxScore(id);
+    else if (type === 'player') showPlayerDetail(id);
+    else if (type === 'arena') showSection('venues');
+}
+
+function showGlobalSearchResults() {
+    const input = document.getElementById('global-search');
+    const container = document.getElementById('global-search-results');
+    if (input.value.trim().length >= 2 && container.innerHTML) {
+        container.style.display = 'block';
+    }
+}
+
+function hideGlobalSearchResults() {
+    document.getElementById('global-search-results').style.display = 'none';
+}
+
+// Division Progress
+function renderDivisionProgress() {
+    const checklist = DATA.teamChecklist || {};
+    const divisions = checklist.divisions || {};
+    const conferences = checklist.conferences || {};
+    const container = document.getElementById('divisions-content');
+
+    let html = '<div class="conference-summary" style="margin-bottom:1.5rem;">';
+    ['East', 'West'].forEach(conf => {
+        const confData = conferences[conf] || { teamsSeen: 0, totalTeams: 15 };
+        const pct = (confData.teamsSeen / 15 * 100).toFixed(0);
+        html += `<div class="conference-box ${confData.teamsSeen === 15 ? 'complete' : ''}">
+                <h5>${conf}ern Conference</h5>
+                <div class="count">${confData.teamsSeen}/15</div>
+                <div class="progress-bar" style="margin-top:0.5rem;height:8px;">
+                    <div class="progress-fill" style="width:${pct}%;"></div>
+                </div>
+            </div>`;
+    });
+    html += '</div>';
+
+    html += '<div class="division-progress-grid">';
+    const divOrder = ['Atlantic', 'Central', 'Southeast', 'Northwest', 'Pacific', 'Southwest'];
+    divOrder.forEach(divName => {
+        const div = divisions[divName] || { teams: [], teamsSeen: 0, totalTeams: 5, conference: '' };
+        const pct = (div.teamsSeen / div.totalTeams * 100).toFixed(0);
+        html += `<div class="division-progress-card ${div.complete ? 'complete' : ''}" onclick="toggleDivisionDetail('${divName}')">
+                <div class="division-header">
+                    <h4>${divName}</h4>
+                    <span class="badge ${div.complete ? 'badge-complete' : 'badge-progress'}">${div.teamsSeen}/${div.totalTeams}</span>
+                </div>
+                <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.5rem;">${div.conference || ''}ern Conference</div>
+                <div class="progress-bar" style="height:6px;margin-bottom:0.75rem;">
+                    <div class="progress-fill" style="width:${pct}%;"></div>
+                </div>
+                <div class="division-team-dots">
+                    ${(div.teams || []).map(t =>
+                        '<span class="division-team-dot ' + (t.seen ? 'seen' : '') + '" title="' + getShortName(t.name) + (t.visitCount ? ' (' + t.visitCount + 'x)' : '') + '"></span>'
+                    ).join('')}
+                </div>
+                <div class="division-detail" id="div-detail-${divName}" style="display:none;">
+                    ${(div.teams || []).map(t =>
+                        '<div class="team-item ' + (t.seen ? 'seen' : '') + '">' +
+                        '<span class="' + (t.seen ? 'check' : 'not-seen') + '">' + (t.seen ? '\u2713' : '\u25CB') + '</span>' +
+                        '<span>' + getShortName(t.name) + '</span>' +
+                        (t.visitCount > 0 ? '<span class="visit-count">' + t.visitCount + 'x</span>' : '') +
+                        '</div>'
+                    ).join('')}
+                </div>
+            </div>`;
+    });
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function toggleDivisionDetail(divName) {
+    const detail = document.getElementById('div-detail-' + divName);
+    if (detail) {
+        detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+    }
+}
+
 // Init
 document.addEventListener('DOMContentLoaded', function() {
     renderGamesGrid();
@@ -928,8 +1932,20 @@ document.addEventListener('DOMContentLoaded', function() {
     renderVenuesTable();
     renderMilestones();
     renderCareerFirsts();
+    handleURLNavigation();
 });
 
+window.addEventListener('popstate', handleURLNavigation);
+
 document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') document.querySelectorAll('.modal.active').forEach(m => closeModal(m.id));
+    if (e.key === 'Escape') {
+        document.querySelectorAll('.modal.active').forEach(m => closeModal(m.id));
+        hideGlobalSearchResults();
+    }
+});
+
+document.addEventListener('click', e => {
+    if (!e.target.closest('.global-search-container')) {
+        hideGlobalSearchResults();
+    }
 });

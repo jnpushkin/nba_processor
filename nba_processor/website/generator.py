@@ -205,7 +205,26 @@ function getTeamCode(fullName) {{
 '''
 
 
-def generate_website_from_data(processed_data: Dict[str, pd.DataFrame], output_path: str) -> None:
+def _serialize_espn_pbp_analysis(analysis: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize ESPN PBP analysis dict with camelCase keys for JavaScript."""
+    if not analysis:
+        return {}
+
+    def _camel_case(snake_str):
+        parts = snake_str.split('_')
+        return parts[0] + ''.join(p.capitalize() for p in parts[1:])
+
+    def _convert(obj):
+        if isinstance(obj, dict):
+            return {_camel_case(k): _convert(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [_convert(item) for item in obj]
+        return obj
+
+    return _convert(analysis)
+
+
+def generate_website_from_data(processed_data: Dict[str, pd.DataFrame], output_path: str, games_data: List[Dict] = None) -> None:
     """
     Generate interactive HTML website from processed data.
     """
@@ -227,7 +246,7 @@ def generate_website_from_data(processed_data: Dict[str, pd.DataFrame], output_p
 
     # Build games summary (one row per game, not per player)
     games_df = processed_data.get('player_games', pd.DataFrame())
-    data['games'] = _build_games_summary(games_df)
+    data['games'] = _build_games_summary(games_df, all_games=games_data)
 
     # Calculate venue/travel stats
     venue_stats = _calculate_venue_stats(games_df)
@@ -349,7 +368,7 @@ def _build_games_summary(games_df: pd.DataFrame, all_games: List[Dict] = None) -
                     home_score = int(parts[0]) if home_players.iloc[0].get('team') == home_team else int(parts[1])
                     away_score = int(parts[1]) if home_players.iloc[0].get('team') == home_team else int(parts[0])
 
-        games.append({
+        game_dict = {
             'game_id': game_id,
             'date': first.get('date', ''),
             'date_yyyymmdd': first.get('date_yyyymmdd', ''),
@@ -359,7 +378,13 @@ def _build_games_summary(games_df: pd.DataFrame, all_games: List[Dict] = None) -
             'home_score': home_score,
             'game_type': first.get('game_type', 'regular'),
             'players': len(group),
-        })
+        }
+
+        # Attach ESPN PBP analysis if available
+        if original and original.get('espn_pbp_analysis'):
+            game_dict['espnPbpAnalysis'] = _serialize_espn_pbp_analysis(original['espn_pbp_analysis'])
+
+        games.append(game_dict)
 
     # Sort by date descending (use date_yyyymmdd for proper sorting)
     games.sort(key=lambda x: x.get('date_yyyymmdd', ''), reverse=True)
@@ -580,6 +605,12 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
 <body>
     <header class="header">
         <div class="header-controls">
+            <div class="global-search-container">
+                <input type="text" id="global-search" class="global-search"
+                    placeholder="Search players, teams..."
+                    onkeyup="handleGlobalSearch(event)" onfocus="showGlobalSearchResults()">
+                <div id="global-search-results" class="global-search-results" style="display:none;"></div>
+            </div>
             <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">&#127769;</button>
         </div>
         <h1>NBA Stats Tracker</h1>
@@ -640,9 +671,15 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
             <button class="tab active" onclick="showSection('games')" data-section="games">Games</button>
             <button class="tab" onclick="showSection('leaders')" data-section="leaders">Leaders</button>
             <button class="tab" onclick="showSection('players')" data-section="players">Players</button>
+            <button class="tab" onclick="showSection('records')" data-section="records">Records</button>
+            <button class="tab" onclick="showSection('scorigami')" data-section="scorigami">Scorigami</button>
+            <button class="tab" onclick="showSection('matchups')" data-section="matchups">Matchups</button>
+            <button class="tab" onclick="showSection('calendar')" data-section="calendar">Calendar</button>
+            <button class="tab" onclick="showSection('seasons')" data-section="seasons">Seasons</button>
             <button class="tab" onclick="showSection('teams')" data-section="teams">Teams</button>
             <button class="tab" onclick="showSection('venues')" data-section="venues">Arenas</button>
             <button class="tab" onclick="showSection('map')" data-section="map">Map</button>
+            <button class="tab" onclick="showSection('divisions')" data-section="divisions">Divisions</button>
             <button class="tab" onclick="showSection('achievements')" data-section="achievements">Achievements</button>
             <button class="tab" onclick="showSection('career-firsts')" data-section="career-firsts">Career Firsts</button>
         </nav>
@@ -683,6 +720,117 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
             </div>
             <div class="table-container">
                 <table id="players-table"><thead></thead><tbody></tbody></table>
+            </div>
+        </div>
+
+        <!-- Records Section -->
+        <div id="records" class="section">
+            <h2>Records</h2>
+            <div class="sub-tabs">
+                <button class="sub-tab active" onclick="showRecordsSubTab('game-records')">Game Records</button>
+                <button class="sub-tab" onclick="showRecordsSubTab('player-records')">Player Records</button>
+                <button class="sub-tab" onclick="showRecordsSubTab('pbp-records')" id="pbp-records-tab" style="display:none;">PBP Records</button>
+            </div>
+            <div id="game-records" class="sub-section active">
+                <div class="records-grid" id="game-records-grid"></div>
+            </div>
+            <div id="player-records" class="sub-section">
+                <div class="records-grid" id="player-records-grid"></div>
+            </div>
+            <div id="pbp-records" class="sub-section">
+                <div class="records-grid" id="pbp-records-grid"></div>
+            </div>
+        </div>
+
+        <!-- Scorigami Section -->
+        <div id="scorigami" class="section">
+            <h2>Scorigami</h2>
+            <div class="scorigami-stats" id="scorigami-stats"></div>
+            <div class="scorigami-container">
+                <table class="scorigami-grid" id="scorigami-grid"></table>
+            </div>
+            <div class="scorigami-tooltip" id="scorigami-tooltip"></div>
+        </div>
+
+        <!-- Matchups Section -->
+        <div id="matchups" class="section">
+            <h2>Head-to-Head Matchups</h2>
+            <div class="sub-tabs">
+                <button class="sub-tab active" onclick="showMatchupsSubTab('matchup-matrix')">Team Matrix</button>
+                <button class="sub-tab" onclick="showMatchupsSubTab('matchup-h2h')">Head-to-Head</button>
+            </div>
+            <div id="matchup-matrix" class="sub-section active">
+                <div class="matchup-matrix-container" id="matchup-matrix-container"></div>
+            </div>
+            <div id="matchup-h2h" class="sub-section">
+                <div class="matchup-controls">
+                    <div class="filter-group">
+                        <label>Team 1</label>
+                        <select id="h2h-team1" onchange="renderH2H()"></select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Team 2</label>
+                        <select id="h2h-team2" onchange="renderH2H()"></select>
+                    </div>
+                </div>
+                <div id="h2h-results" class="h2h-results"></div>
+            </div>
+        </div>
+
+        <!-- Calendar Section -->
+        <div id="calendar" class="section">
+            <h2>Game Calendar</h2>
+            <div class="sub-tabs">
+                <button class="sub-tab active" onclick="showCalendarSubTab('calendar-season')">Season Day Tracker</button>
+                <button class="sub-tab" onclick="showCalendarSubTab('calendar-onthisday')">On This Day</button>
+            </div>
+            <div id="calendar-season" class="sub-section active">
+                <div id="calendar-grid"></div>
+                <div class="calendar-legend">
+                    <div class="calendar-legend-item">
+                        <div class="calendar-legend-swatch" style="background:rgba(74,158,255,0.2);"></div>
+                        <span>1 game</span>
+                    </div>
+                    <div class="calendar-legend-item">
+                        <div class="calendar-legend-swatch" style="background:rgba(74,158,255,0.5);"></div>
+                        <span>2+ games</span>
+                    </div>
+                </div>
+            </div>
+            <div id="calendar-onthisday" class="sub-section">
+                <div style="text-align:center;margin-bottom:1.5rem;">
+                    <h3 id="onthisday-date" style="font-size:1.5rem;color:var(--accent-color);"></h3>
+                    <p style="color:var(--text-secondary);">Games attended on this date in previous years</p>
+                </div>
+                <div id="onthisday-content"></div>
+                <div id="onthisday-empty" style="display:none;text-align:center;padding:2rem;color:var(--text-muted);">
+                    No games attended on this date
+                </div>
+            </div>
+        </div>
+
+        <!-- Seasons Section -->
+        <div id="seasons" class="section">
+            <h2>Season Stats</h2>
+            <div class="season-stats-container">
+                <div class="season-chart-container">
+                    <canvas id="season-chart"></canvas>
+                </div>
+                <div class="season-summary" id="season-summary"></div>
+                <div class="table-container" style="margin-top:1rem;">
+                    <table id="season-table">
+                        <thead>
+                            <tr>
+                                <th>Season</th>
+                                <th>Games</th>
+                                <th>Teams</th>
+                                <th>Arenas</th>
+                                <th>Players</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -735,6 +883,12 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
                 <span class="legend-item"><span class="legend-dot not-visited"></span> Not Visited</span>
             </div>
             <div id="arena-map"></div>
+        </div>
+
+        <!-- Divisions Section -->
+        <div id="divisions" class="section">
+            <h2>Division Progress</h2>
+            <div id="divisions-content"></div>
         </div>
 
         <!-- Achievements Section -->
@@ -801,6 +955,14 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
         <div class="modal-content">
             <button class="modal-close" onclick="closeModal('player-modal')">&times;</button>
             <div id="player-detail"></div>
+        </div>
+    </div>
+
+    <!-- Day Games Modal -->
+    <div class="modal" id="day-games-modal" onclick="if(event.target === this) closeModal('day-games-modal')">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModal('day-games-modal')">&times;</button>
+            <div id="day-games-detail"></div>
         </div>
     </div>
 
