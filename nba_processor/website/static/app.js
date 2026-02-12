@@ -164,14 +164,6 @@ function formatPeriod(p) {
     return (p - 4) + 'OT';
 }
 
-function formatGameTime(t) {
-    if (typeof t !== 'string') return t;
-    // Already in M:SS format
-    if (t.includes(':')) return t;
-    // Bare seconds like "19.4" → "0:19"
-    const secs = Math.floor(parseFloat(t));
-    return '0:' + secs.toString().padStart(2, '0');
-}
 
 function chronoSort(a, b) {
     if (a.startPeriod !== b.startPeriod) return a.startPeriod - b.startPeriod;
@@ -265,14 +257,11 @@ function showBoxScore(gameId) {
             html += '</div>';
         }
 
-        // Decisive Shots
-        const shots = [pbp.gameWinningShots?.clutchGoAhead, pbp.gameWinningShots?.decisiveShot].filter(Boolean);
-        const uniqueShots = shots.filter((s, i, arr) => i === 0 || s.player !== arr[0].player || s.time !== arr[0].time);
-        if (uniqueShots.length > 0) {
-            html += '<div class="analysis-label">Decisive Shots</div><div class="analysis-pills">';
-            uniqueShots.forEach(s => {
-                html += `<span class="analysis-pill analysis-pill-shot">${s.player} (${s.team}) with ${formatGameTime(s.time)} left in ${formatPeriod(s.period)} → ${formatScore(s.score, awayTeam, homeTeam)}</span>`;
-            });
+        // Decisive Shot
+        const shot = pbp.gameWinningShots?.decisiveShot;
+        if (shot) {
+            html += '<div class="analysis-label">Decisive Shot</div><div class="analysis-pills">';
+            html += `<span class="analysis-pill analysis-pill-shot">${shot.player} (${shot.team}) with ${shot.time} left in ${formatPeriod(shot.period)} → ${formatScore(shot.score, awayTeam, homeTeam)}</span>`;
             html += '</div>';
         }
 
