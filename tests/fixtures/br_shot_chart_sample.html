@@ -1,0 +1,46 @@
+<html>
+<body>
+<div id="content">
+
+<select id="quarter-DEN" onchange="update_shot_chart('DEN');">
+<option value="">All Quarters</option>
+<option value="q-1">1st</option>
+<option value="q-2">2nd</option>
+</select>
+<select id="player-DEN" onchange="update_shot_chart('DEN');">
+<option value="">All Players</option>
+<option value="jokicni01">Nikola Jokic</option>
+<option value="murraja01">Jamal Murray</option>
+</select>
+
+<div id="wrapper-DEN">
+<div id="shots-DEN" class="shot-area">
+<img src="http://cdn.ssref.net/req/1/images/bbr/court-nba-bbr.svg" style="width:500px;" alt="nbahalfcourt">
+<div style="top:58px;left:233px;" tip="1st quarter, 10:12.0 remaining<br>Nikola Jokic made 2-pointer from 3 ft<br>Denver now trails 2-5" class="tooltip q-1 p-jokicni01 make">&#9679;</div>
+<div style="top:282px;left:177px;" tip="1st quarter, 8:58.0 remaining<br>Jamal Murray missed 3-pointer from 26 ft<br>Denver trails 2-5" class="tooltip q-1 p-murraja01 miss">&#215;</div>
+<div style="top:150px;left:300px;" tip="2nd quarter, 5:30.0 remaining<br>Nikola Jokic made 2-pointer from 12 ft<br>Denver now leads 30-28" class="tooltip q-2 p-jokicni01 make">&#9679;</div>
+</div>
+</div>
+
+<select id="quarter-GSW" onchange="update_shot_chart('GSW');">
+<option value="">All Quarters</option>
+<option value="q-1">1st</option>
+<option value="q-2">2nd</option>
+</select>
+<select id="player-GSW" onchange="update_shot_chart('GSW');">
+<option value="">All Players</option>
+<option value="curryst01">Stephen Curry</option>
+<option value="moodymo01">Moses Moody</option>
+</select>
+
+<div id="wrapper-GSW">
+<div id="shots-GSW" class="shot-area">
+<img src="http://cdn.ssref.net/req/1/images/bbr/court-nba-bbr.svg" style="width:500px;" alt="nbahalfcourt">
+<div style="top:283px;left:313px;" tip="1st quarter, 7:36.0 remaining<br>Stephen Curry made 3-pointer from 26 ft<br>Golden State now leads 11-9" class="tooltip q-1 p-curryst01 make">&#9679;</div>
+<div style="top:30px;left:240px;" tip="2nd quarter, 3:00.0 remaining<br>Moses Moody missed 2-pointer from 2 ft<br>Golden State trails 25-30" class="tooltip q-2 p-moodymo01 miss">&#215;</div>
+</div>
+</div>
+
+</div>
+</body>
+</html>

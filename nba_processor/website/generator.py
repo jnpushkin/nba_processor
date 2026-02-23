@@ -384,6 +384,12 @@ def _build_games_summary(games_df: pd.DataFrame, all_games: List[Dict] = None) -
         if original and original.get('espn_pbp_analysis'):
             game_dict['espnPbpAnalysis'] = _serialize_espn_pbp_analysis(original['espn_pbp_analysis'])
 
+        # Attach BR extras (PBP, shot chart, plus-minus) if available
+        _br_key_map = {'br_pbp': 'brPbp', 'br_shot_chart': 'brShotChart', 'br_plus_minus': 'brPlusMinus'}
+        for snake_key, camel_key in _br_key_map.items():
+            if original and original.get(snake_key):
+                game_dict[camel_key] = _serialize_espn_pbp_analysis(original[snake_key])
+
         games.append(game_dict)
 
     # Sort by date descending (use date_yyyymmdd for proper sorting)

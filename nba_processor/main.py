@@ -287,6 +287,11 @@ def main() -> None:
         help='Skip scraping ESPN play-by-play data for games'
     )
     parser.add_argument(
+        '--no-scrape-br-extras',
+        action='store_true',
+        help='Skip scraping BR play-by-play, shot chart, and plus-minus data'
+    )
+    parser.add_argument(
         '--log-file',
         type=str,
         default=None,
@@ -511,6 +516,58 @@ def main() -> None:
                 warn(f"ESPN PBP scraper not available: {e}")
             except Exception as e:
                 warn(f"ESPN PBP scraping failed: {e}")
+
+        # Scrape BR extras (PBP, shot chart, plus-minus)
+        if not args.no_scrape_br_extras:
+            try:
+                from .scrapers.br_extras_scraper import BRExtrasScraper
+                info("\nScraping BR play-by-play, shot chart, and plus-minus...")
+
+                br_scraper = BRExtrasScraper()
+                br_count = 0
+                for game in games_data:
+                    game_id = game.get('game_id', '')
+                    if not game_id:
+                        continue
+
+                    # Skip if already has all three
+                    if game.get('br_pbp') and game.get('br_shot_chart') and game.get('br_plus_minus'):
+                        br_count += 1
+                        continue
+
+                    results = br_scraper.scrape_all(game_id)
+
+                    updated = False
+                    for key in ('pbp', 'shot_chart', 'plus_minus'):
+                        br_key = f'br_{key}'
+                        if results.get(key) and not game.get(br_key):
+                            game[br_key] = results[key]
+                            updated = True
+
+                    if updated:
+                        br_count += 1
+                        # Update main game cache
+                        cache_path = CACHE_DIR / f"{game_id}.json"
+                        if cache_path.exists():
+                            try:
+                                with open(cache_path, 'r') as f:
+                                    cached = json.load(f)
+                                for key in ('br_pbp', 'br_shot_chart', 'br_plus_minus'):
+                                    if game.get(key):
+                                        cached[key] = game[key]
+                                with open(cache_path, 'w') as f:
+                                    json.dump(cached, f, indent=2)
+                            except (json.JSONDecodeError, IOError):
+                                pass
+                    elif game.get('br_pbp') or game.get('br_shot_chart') or game.get('br_plus_minus'):
+                        br_count += 1
+
+                info(f"  BR extras data for {br_count}/{len(games_data)} games")
+
+            except ImportError as e:
+                warn(f"BR extras scraper not available: {e}")
+            except Exception as e:
+                warn(f"BR extras scraping failed: {e}")
 
         if generate_website:
             try:
