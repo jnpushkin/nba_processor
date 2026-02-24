@@ -221,6 +221,8 @@ function showBoxScore(gameId) {
 
     const awayWon = awayScore > homeScore;
 
+    const hasBrData = gameInfo?.brShotChart || gameInfo?.brPlusMinus || gameInfo?.brPbp;
+
     let html = `
     <div class="boxscore-header">
         <div class="boxscore-matchup">
@@ -230,6 +232,18 @@ function showBoxScore(gameId) {
         </div>
         <div class="date">${gameInfo?.date || ''}${gameType}</div>
     </div>`;
+
+    if (hasBrData) {
+        html += `<div class="sub-tabs" style="justify-content:center;">
+            <button class="sub-tab active" onclick="showBoxScoreTab('box',this)">Box Score</button>
+            ${gameInfo.brShotChart ? '<button class="sub-tab" onclick="showBoxScoreTab(\'shots\',this)">Shot Chart</button>' : ''}
+            ${gameInfo.brPlusMinus ? '<button class="sub-tab" onclick="showBoxScoreTab(\'plusminus\',this)">Plus-Minus</button>' : ''}
+            ${gameInfo.brPbp ? '<button class="sub-tab" onclick="showBoxScoreTab(\'pbp\',this)">Play-by-Play</button>' : ''}
+        </div>`;
+    }
+
+    // Box Score tab content
+    html += '<div class="bs-tab-content" id="bs-tab-box">';
 
     // Advanced Game Analysis
     const pbp = gameInfo?.espnPbpAnalysis;
@@ -311,8 +325,481 @@ function showBoxScore(gameId) {
         html += '</tbody></table></div></div>';
     });
 
+    html += '</div>'; // end bs-tab-box
+
+    // BR data tabs (rendered lazily)
+    if (gameInfo?.brShotChart) html += '<div class="bs-tab-content" id="bs-tab-shots" style="display:none;" data-game-id="' + gameId + '"></div>';
+    if (gameInfo?.brPlusMinus) html += '<div class="bs-tab-content" id="bs-tab-plusminus" style="display:none;" data-game-id="' + gameId + '"></div>';
+    if (gameInfo?.brPbp) html += '<div class="bs-tab-content" id="bs-tab-pbp" style="display:none;" data-game-id="' + gameId + '"></div>';
+
     detail.innerHTML = html;
     openModal('boxscore-modal');
+}
+
+// Box score sub-tab switching
+function showBoxScoreTab(tabId, btn) {
+    document.querySelectorAll('.bs-tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('#boxscore-detail .sub-tab').forEach(t => t.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    else { const b = document.querySelector(`#boxscore-detail .sub-tab[onclick*="'${tabId}'"]`); if (b) b.classList.add('active'); }
+
+    const tabEl = document.getElementById('bs-tab-' + tabId);
+    if (tabEl) {
+        tabEl.style.display = 'block';
+        // Lazy render
+        if (!tabEl.dataset.rendered) {
+            const gameId = tabEl.dataset.gameId;
+            const gameInfo = (DATA.games || []).find(g => g.game_id === gameId);
+            if (gameInfo) {
+                if (tabId === 'shots') { _scTeamFilter = 'all'; _scQuarterFilter = 'all'; _scPlayerFilter = 'all'; tabEl.innerHTML = renderShotChart(gameInfo); updateScStatsPanel(); }
+                else if (tabId === 'plusminus') tabEl.innerHTML = renderPlusMinus(gameInfo);
+                else if (tabId === 'pbp') tabEl.innerHTML = renderPBPLog(gameInfo);
+            }
+            tabEl.dataset.rendered = '1';
+        }
+    }
+}
+
+// Open box score modal directly to shot chart with a specific shot highlighted
+function showBoxScoreWithShot(gameId, shotIdx) {
+    showBoxScore(gameId);
+    // Switch to shots tab (filters reset to 'all' inside showBoxScoreTab)
+    showBoxScoreTab('shots', null);
+    // Highlight the shot after a brief delay for DOM rendering
+    setTimeout(() => highlightShot(shotIdx), 80);
+}
+
+function highlightShot(shotIdx) {
+    // Remove any existing highlight
+    document.querySelectorAll('.sc-shot-highlight').forEach(el => el.classList.remove('sc-shot-highlight'));
+    // Find the shot element
+    const el = document.querySelector(`.sc-shot[data-idx="${shotIdx}"]`);
+    if (!el) return;
+    el.classList.add('sc-shot-highlight');
+    // Scroll the court into view
+    const court = document.querySelector('.sc-court-container');
+    if (court) court.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Also show the tooltip for it
+    const gameId = document.getElementById('bs-tab-shots')?.dataset.gameId;
+    const gameInfo = (DATA.games || []).find(g => g.game_id === gameId);
+    if (gameInfo?.brShotChart?.shots[shotIdx]) {
+        const s = gameInfo.brShotChart.shots[shotIdx];
+        const tip = document.getElementById('sc-tooltip');
+        if (tip) {
+            const result = s.made ? '<span style="color:#27ae60;font-weight:600">Made</span>' : '<span style="color:#e74c3c;font-weight:600">Missed</span>';
+            const escapedId = (s.playerId || '').replace(/'/g, "\\'");
+            const escapedName = (s.player || '').replace(/'/g, "\\'");
+            const distMatch = s.description && s.description.match(/from (\d+) ft/);
+            const distStr = distMatch ? ` (${distMatch[1]} ft)` : '';
+            tip.innerHTML = `
+                <div class="sc-tip-player">${s.player} <span style="color:var(--text-muted)">(${s.team})</span></div>
+                <div class="sc-tip-desc">${s.description || 'Shot'}${distStr ? '' : ''}</div>
+                <div class="sc-tip-meta">Q${s.quarter} ${result}</div>
+                <div class="sc-tip-action"><a href="javascript:void(0)" onclick="filterByPlayer('${escapedId}','${escapedName}')">Show only ${s.player}'s shots</a></div>
+            `;
+            // Position near the shot using SVG coordinates
+            const svg = document.querySelector('.sc-court');
+            const container = document.querySelector('.sc-court-container');
+            if (svg && container) {
+                const svgRect = svg.getBoundingClientRect();
+                const containerRect = container.getBoundingClientRect();
+                // Convert SVG viewBox coords to pixel position
+                const viewBox = svg.viewBox.baseVal;
+                const scaleX = svgRect.width / viewBox.width;
+                const scaleY = svgRect.height / viewBox.height;
+                let left = (s.x - viewBox.x) * scaleX + (svgRect.left - containerRect.left) + 10;
+                let top = (s.y - viewBox.y) * scaleY + (svgRect.top - containerRect.top) + 10;
+                if (left + 200 > containerRect.width) left -= 220;
+                if (top + 100 > containerRect.height) top -= 110;
+                tip.style.left = left + 'px';
+                tip.style.top = top + 'px';
+            }
+            tip.classList.add('visible');
+        }
+    }
+}
+
+// Shot Chart
+function renderShotChart(gameInfo) {
+    const data = gameInfo.brShotChart;
+    if (!data || !data.shots || !data.shots.length) return '<p style="text-align:center;color:var(--text-muted);padding:2rem;">No shot chart data</p>';
+
+    const shots = data.shots;
+    const awayTeam = getTeamCode(gameInfo.away_team);
+    const homeTeam = getTeamCode(gameInfo.home_team);
+
+    // Detect teams from shot data
+    const teams = [...new Set(shots.map(s => s.team))];
+    const team1 = teams[0] || '';
+    const team2 = teams[1] || '';
+
+    // Count quarters
+    const quarters = [...new Set(shots.map(s => s.quarter))].sort((a, b) => a - b);
+
+    // Filter bar
+    let html = '<div class="sc-filters">';
+    html += '<div class="sc-filter-group">';
+    html += `<button class="sc-filter-btn active" onclick="filterShotChart('all',null,this)">Both</button>`;
+    if (team1) html += `<button class="sc-filter-btn" onclick="filterShotChart('${team1}',null,this)">${team1}</button>`;
+    if (team2) html += `<button class="sc-filter-btn" onclick="filterShotChart('${team2}',null,this)">${team2}</button>`;
+    html += '</div><div class="sc-filter-group">';
+    html += `<button class="sc-filter-btn active" onclick="filterShotChart(null,'all',this)">All</button>`;
+    quarters.forEach(q => {
+        html += `<button class="sc-filter-btn" onclick="filterShotChart(null,${q},this)">Q${q}</button>`;
+    });
+    html += '</div>';
+    html += '<div class="sc-filter-group" id="sc-player-filter" style="display:none;"><button class="sc-filter-btn active" id="sc-player-filter-btn" onclick="clearPlayerFilter()"></button></div>';
+    html += '</div>';
+
+    // Summary stats
+    const made = shots.filter(s => s.made).length;
+    const total = shots.length;
+    const pct = total > 0 ? ((made / total) * 100).toFixed(1) : '0.0';
+    html += `<div class="sc-summary" id="sc-summary">${made}/${total} FG (${pct}%)</div>`;
+
+    // SVG court — BR coordinate system: 500px wide, hoop at ~(250,52), y increases toward half-court
+    // viewBox expanded to fit deep shots (y up to ~380)
+    html += '<div class="sc-court-container">';
+    html += '<svg class="sc-court" viewBox="-20 -60 540 460" preserveAspectRatio="xMidYMid meet">';
+
+    const lc = 'var(--border-color)'; // line color
+    html += `
+        <!-- Baseline -->
+        <line x1="0" y1="0" x2="500" y2="0" stroke="${lc}" stroke-width="2"/>
+        <!-- Sidelines -->
+        <line x1="0" y1="0" x2="0" y2="395" stroke="${lc}" stroke-width="2"/>
+        <line x1="500" y1="0" x2="500" y2="395" stroke="${lc}" stroke-width="2"/>
+        <!-- Half-court line -->
+        <line x1="0" y1="395" x2="500" y2="395" stroke="${lc}" stroke-width="2"/>
+        <!-- Paint / key (19ft wide, 16ft from baseline = 160px) -->
+        <rect x="170" y="0" width="160" height="190" fill="none" stroke="${lc}" stroke-width="1.5"/>
+        <!-- Free throw circle (6ft radius = 60px) -->
+        <circle cx="250" cy="190" r="60" fill="none" stroke="${lc}" stroke-width="1.5"/>
+        <!-- Restricted area arc (4ft = 40px from hoop center) -->
+        <path d="M 220 0 A 40 40 0 0 0 280 0" fill="none" stroke="${lc}" stroke-width="1"/>
+        <!-- Backboard -->
+        <line x1="220" y1="40" x2="280" y2="40" stroke="${lc}" stroke-width="2"/>
+        <!-- Hoop -->
+        <circle cx="250" cy="52" r="8" fill="none" stroke="${lc}" stroke-width="1.5"/>
+        <!-- Three-point line: corners + arc (radius 224 from hoop at 250,52) -->
+        <line x1="30" y1="0" x2="30" y2="92" stroke="${lc}" stroke-width="1.5"/>
+        <line x1="470" y1="0" x2="470" y2="92" stroke="${lc}" stroke-width="1.5"/>
+        <path d="M 30 92 A 224 224 0 0 0 470 92" fill="none" stroke="${lc}" stroke-width="1.5"/>
+        <!-- Center court half-circle -->
+        <path d="M 190 395 A 60 60 0 0 1 310 395" fill="none" stroke="${lc}" stroke-width="1.5"/>
+    `;
+
+    // Plot shots
+    shots.forEach((s, i) => {
+        const cx = s.x;
+        const cy = s.y;
+        const teamClass = `sc-team-${s.team}`;
+        const qClass = `sc-q-${s.quarter}`;
+        const pClass = `sc-p-${s.playerId || i}`;
+        if (s.made) {
+            html += `<circle class="sc-shot ${teamClass} ${qClass} ${pClass}" cx="${cx}" cy="${cy}" r="5" fill="rgba(39,174,96,0.8)" stroke="rgba(39,174,96,1)" stroke-width="1" data-idx="${i}"/>`;
+        } else {
+            html += `<g class="sc-shot ${teamClass} ${qClass} ${pClass}" data-idx="${i}"><line x1="${cx-4}" y1="${cy-4}" x2="${cx+4}" y2="${cy+4}" stroke="rgba(231,76,60,0.8)" stroke-width="2"/><line x1="${cx+4}" y1="${cy-4}" x2="${cx-4}" y2="${cy+4}" stroke="rgba(231,76,60,0.8)" stroke-width="2"/></g>`;
+        }
+    });
+
+    html += '</svg>';
+    // Tooltip (positioned absolutely within the court container)
+    html += '<div class="sc-tooltip" id="sc-tooltip"></div>';
+    html += '</div>';
+
+    // Legend
+    html += '<div class="sc-legend"><span class="sc-legend-item"><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="rgba(39,174,96,0.8)"/></svg> Made</span>';
+    html += '<span class="sc-legend-item"><svg width="12" height="12"><line x1="1" y1="1" x2="11" y2="11" stroke="rgba(231,76,60,0.8)" stroke-width="2"/><line x1="11" y1="1" x2="1" y2="11" stroke="rgba(231,76,60,0.8)" stroke-width="2"/></svg> Missed</span>';
+    html += '<span style="margin-left:0.5rem;color:var(--text-muted);font-size:0.75rem;">Click a shot for details</span></div>';
+
+    // Stats panel (updates with filters)
+    html += '<div class="sc-stats-panel" id="sc-stats-panel"></div>';
+
+    return html;
+}
+
+function _parseDistance(desc) {
+    const m = desc && desc.match(/from (\d+) ft/);
+    return m ? parseInt(m[1]) : null;
+}
+
+function updateScStatsPanel() {
+    const panel = document.getElementById('sc-stats-panel');
+    if (!panel) return;
+
+    const gameId = document.getElementById('bs-tab-shots')?.dataset.gameId;
+    const gameInfo = (DATA.games || []).find(g => g.game_id === gameId);
+    if (!gameInfo?.brShotChart?.shots) { panel.innerHTML = ''; return; }
+
+    const allShots = gameInfo.brShotChart.shots;
+    const shots = allShots.filter(s => {
+        const matchTeam = _scTeamFilter === 'all' || s.team === _scTeamFilter;
+        const matchQ = _scQuarterFilter === 'all' || s.quarter === _scQuarterFilter;
+        const matchP = _scPlayerFilter === 'all' || (s.playerId || '') === _scPlayerFilter;
+        return matchTeam && matchQ && matchP;
+    });
+
+    if (!shots.length) { panel.innerHTML = ''; return; }
+
+    // Parse distances
+    const withDist = shots.map(s => ({ ...s, dist: _parseDistance(s.description) })).filter(s => s.dist !== null);
+
+    let html = '<div class="sc-stats-grid">';
+
+    // --- Longest Makes ---
+    const longestMakes = withDist.filter(s => s.made).sort((a, b) => b.dist - a.dist).slice(0, 5);
+    if (longestMakes.length) {
+        html += '<div class="sc-stat-card"><h5>Longest Makes</h5><ol class="sc-stat-list">';
+        longestMakes.forEach(s => {
+            html += `<li><span class="sc-stat-dist">${s.dist} ft</span> <span class="sc-stat-name">${s.player}</span> <span class="sc-stat-meta">Q${s.quarter}</span></li>`;
+        });
+        html += '</ol></div>';
+    }
+
+    // --- Zone Breakdown ---
+    const zones = [
+        { label: 'Paint', sublabel: '0-4 ft', test: d => d <= 4 },
+        { label: 'Mid-Range', sublabel: '5-21 ft', test: d => d >= 5 && d <= 21 },
+        { label: 'Three-Point', sublabel: '22+ ft', test: d => d >= 22 },
+    ];
+    html += '<div class="sc-stat-card"><h5>Shooting Zones</h5><div class="sc-zones">';
+    zones.forEach(z => {
+        const zShots = withDist.filter(s => z.test(s.dist));
+        const made = zShots.filter(s => s.made).length;
+        const total = zShots.length;
+        const pct = total > 0 ? ((made / total) * 100).toFixed(1) : '-';
+        const barWidth = total > 0 ? ((made / total) * 100) : 0;
+        html += `<div class="sc-zone-row">
+            <div class="sc-zone-label">${z.label}<span class="sc-zone-sub">${z.sublabel}</span></div>
+            <div class="sc-zone-bar-bg"><div class="sc-zone-bar-fill" style="width:${barWidth}%"></div></div>
+            <div class="sc-zone-val">${made}/${total} <span class="sc-zone-pct">${pct}%</span></div>
+        </div>`;
+    });
+    html += '</div></div>';
+
+    // --- Player Breakdown (top 8 by attempts) ---
+    if (_scPlayerFilter === 'all') {
+        const playerMap = {};
+        withDist.forEach(s => {
+            if (!playerMap[s.player]) playerMap[s.player] = { made: 0, total: 0, team: s.team };
+            playerMap[s.player].total++;
+            if (s.made) playerMap[s.player].made++;
+        });
+        const players = Object.entries(playerMap).sort((a, b) => b[1].total - a[1].total).slice(0, 8);
+        if (players.length > 1) {
+            html += '<div class="sc-stat-card sc-stat-card-wide"><h5>Player Breakdown</h5><div class="sc-players-grid">';
+            players.forEach(([name, st]) => {
+                const pct = st.total > 0 ? ((st.made / st.total) * 100).toFixed(1) : '0.0';
+                html += `<div class="sc-player-row">
+                    <span class="sc-stat-name">${name}</span>
+                    <span class="sc-stat-meta">${st.team}</span>
+                    <span class="sc-zone-val">${st.made}/${st.total} <span class="sc-zone-pct">${pct}%</span></span>
+                </div>`;
+            });
+            html += '</div></div>';
+        }
+    }
+
+    html += '</div>';
+    panel.innerHTML = html;
+}
+
+// Shot chart active filters (module-level state)
+let _scTeamFilter = 'all';
+let _scQuarterFilter = 'all';
+let _scPlayerFilter = 'all';
+
+function filterShotChart(team, quarter, btn) {
+    if (team !== null) _scTeamFilter = team;
+    if (quarter !== null) _scQuarterFilter = quarter;
+
+    // Update active buttons in the correct filter group
+    if (btn) {
+        const group = btn.parentElement;
+        group.querySelectorAll('.sc-filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    }
+
+    _applyScFilters();
+}
+
+function _applyScFilters() {
+    // Show/hide shots
+    document.querySelectorAll('.sc-shot').forEach(el => {
+        const matchTeam = _scTeamFilter === 'all' || el.classList.contains('sc-team-' + _scTeamFilter);
+        const matchQ = _scQuarterFilter === 'all' || el.classList.contains('sc-q-' + _scQuarterFilter);
+        const matchP = _scPlayerFilter === 'all' || el.classList.contains('sc-p-' + _scPlayerFilter);
+        el.style.display = (matchTeam && matchQ && matchP) ? '' : 'none';
+    });
+
+    // Update summary
+    const gameId = document.getElementById('bs-tab-shots')?.dataset.gameId;
+    const gameInfo = (DATA.games || []).find(g => g.game_id === gameId);
+    if (gameInfo?.brShotChart) {
+        const shots = gameInfo.brShotChart.shots.filter(s => {
+            const matchTeam = _scTeamFilter === 'all' || s.team === _scTeamFilter;
+            const matchQ = _scQuarterFilter === 'all' || s.quarter === _scQuarterFilter;
+            const matchP = _scPlayerFilter === 'all' || (s.playerId || '') === _scPlayerFilter;
+            return matchTeam && matchQ && matchP;
+        });
+        const made = shots.filter(s => s.made).length;
+        const total = shots.length;
+        const pct = total > 0 ? ((made / total) * 100).toFixed(1) : '0.0';
+        const sumEl = document.getElementById('sc-summary');
+        if (sumEl) sumEl.textContent = `${made}/${total} FG (${pct}%)`;
+    }
+
+    // Update player filter button visibility
+    const pfGroup = document.getElementById('sc-player-filter');
+    if (pfGroup) pfGroup.style.display = _scPlayerFilter === 'all' ? 'none' : 'flex';
+
+    updateScStatsPanel();
+}
+
+function filterByPlayer(playerId, playerName) {
+    _scPlayerFilter = playerId;
+    const btn = document.getElementById('sc-player-filter-btn');
+    if (btn) btn.textContent = playerName + ' \u2715';
+    _applyScFilters();
+    dismissScTooltip();
+}
+
+function clearPlayerFilter() {
+    _scPlayerFilter = 'all';
+    _applyScFilters();
+}
+
+function dismissScTooltip() {
+    const tip = document.getElementById('sc-tooltip');
+    if (tip) { tip.classList.remove('visible'); }
+}
+
+// Click delegation on the SVG court
+document.addEventListener('click', function(e) {
+    const tip = document.getElementById('sc-tooltip');
+    if (!tip) return;
+
+    // Find if we clicked on a shot element (or child of one)
+    const shotEl = e.target.closest('.sc-shot');
+    if (shotEl) {
+        const idx = parseInt(shotEl.dataset.idx);
+        const gameId = document.getElementById('bs-tab-shots')?.dataset.gameId;
+        const gameInfo = (DATA.games || []).find(g => g.game_id === gameId);
+        if (!gameInfo?.brShotChart?.shots[idx]) return;
+
+        const s = gameInfo.brShotChart.shots[idx];
+        const result = s.made ? '<span style="color:#27ae60;font-weight:600">Made</span>' : '<span style="color:#e74c3c;font-weight:600">Missed</span>';
+        const escapedId = (s.playerId || '').replace(/'/g, "\\'");
+        const escapedName = (s.player || '').replace(/'/g, "\\'");
+
+        tip.innerHTML = `
+            <div class="sc-tip-player">${s.player} <span style="color:var(--text-muted)">(${s.team})</span></div>
+            <div class="sc-tip-desc">${s.description || 'Shot'}</div>
+            <div class="sc-tip-meta">Q${s.quarter} ${result}</div>
+            <div class="sc-tip-action"><a href="javascript:void(0)" onclick="filterByPlayer('${escapedId}','${escapedName}')">Show only ${s.player}'s shots</a></div>
+        `;
+
+        // Position tooltip near the click within the court container
+        const container = document.querySelector('.sc-court-container');
+        if (container) {
+            const rect = container.getBoundingClientRect();
+            let left = e.clientX - rect.left + 10;
+            let top = e.clientY - rect.top + 10;
+            // Keep tooltip in bounds
+            if (left + 200 > rect.width) left = left - 220;
+            if (top + 100 > rect.height) top = top - 110;
+            tip.style.left = left + 'px';
+            tip.style.top = top + 'px';
+        }
+        tip.classList.add('visible');
+        e.stopPropagation();
+        return;
+    }
+
+    // Click outside shot -> dismiss tooltip (but not if clicking inside the tooltip itself)
+    if (!e.target.closest('.sc-tooltip')) {
+        dismissScTooltip();
+    }
+});
+
+// Plus-Minus
+function renderPlusMinus(gameInfo) {
+    const data = gameInfo.brPlusMinus;
+    if (!data) return '<p style="text-align:center;color:var(--text-muted);padding:2rem;">No plus-minus data</p>';
+
+    const awayTeam = gameInfo.away_team || 'Away';
+    const homeTeam = gameInfo.home_team || 'Home';
+
+    function pmColor(val) {
+        if (val > 0) return 'var(--success)';
+        if (val < 0) return '#e74c3c';
+        return 'var(--text-muted)';
+    }
+
+    function pmFormat(val) {
+        return val > 0 ? '+' + val : '' + val;
+    }
+
+    function renderTeamPM(teamName, players) {
+        if (!players || !players.length) return '';
+        const sorted = [...players].sort((a, b) => b.net - a.net);
+        let html = `<div class="pm-team-section"><div class="boxscore-team-title">${teamName}</div>`;
+        html += '<div class="table-container" style="max-height:none;"><table class="pm-table"><thead><tr><th>Player</th><th>On</th><th>Off</th><th>Net</th></tr></thead><tbody>';
+        sorted.forEach(p => {
+            html += `<tr>
+                <td>${p.player}</td>
+                <td class="num" style="color:${pmColor(p.on)}">${pmFormat(p.on)}</td>
+                <td class="num" style="color:${pmColor(p.off)}">${pmFormat(p.off)}</td>
+                <td class="num" style="color:${pmColor(p.net)};font-weight:600">${pmFormat(p.net)}</td>
+            </tr>`;
+        });
+        html += '</tbody></table></div></div>';
+        return html;
+    }
+
+    return renderTeamPM(awayTeam, data.away) + renderTeamPM(homeTeam, data.home);
+}
+
+// Play-by-Play Log
+function renderPBPLog(gameInfo) {
+    const data = gameInfo.brPbp;
+    if (!data || !data.plays || !data.plays.length) return '<p style="text-align:center;color:var(--text-muted);padding:2rem;">No play-by-play data</p>';
+
+    const plays = data.plays;
+    const quarters = [...new Set(plays.map(p => p.quarter))].sort((a, b) => a - b);
+
+    // Quarter jump buttons
+    let html = '<div class="pbp-quarter-btns">';
+    quarters.forEach(q => {
+        if (q > 0) html += `<button class="sc-filter-btn" onclick="document.getElementById('pbp-q-${q}').scrollIntoView({behavior:'smooth',block:'start'})">Q${q}</button>`;
+    });
+    html += '</div>';
+
+    html += '<div class="pbp-log-container"><table class="pbp-table"><thead><tr><th class="pbp-time">Time</th><th class="pbp-away">Away</th><th class="pbp-score">Score</th><th class="pbp-home">Home</th></tr></thead><tbody>';
+
+    let currentQ = 0;
+    plays.forEach(p => {
+        if (p.quarter !== currentQ && p.quarter > 0) {
+            currentQ = p.quarter;
+            html += `<tr class="pbp-quarter-header" id="pbp-q-${currentQ}"><td colspan="4">${formatPeriod(currentQ)}</td></tr>`;
+        }
+
+        if (!p.teamSide) {
+            // Neutral event
+            html += `<tr class="pbp-neutral"><td class="pbp-time">${p.time}</td><td colspan="3" class="pbp-center">${p.action}</td></tr>`;
+        } else {
+            const isScoring = p.awayScore !== null && p.homeScore !== null;
+            const rowClass = isScoring ? ' class="pbp-scoring"' : '';
+            const awayAction = p.teamSide === 'away' ? p.action : '';
+            const homeAction = p.teamSide === 'home' ? p.action : '';
+            const scoreStr = p.score || '';
+            html += `<tr${rowClass}><td class="pbp-time">${p.time}</td><td class="pbp-away">${awayAction}</td><td class="pbp-score">${scoreStr}</td><td class="pbp-home">${homeAction}</td></tr>`;
+        }
+    });
+
+    html += '</tbody></table></div>';
+    return html;
 }
 
 function renderBoxScoreRow(p) {
@@ -864,17 +1351,66 @@ function filterMilestones() {
         if (data.length === 0) {
             html += '<p class="empty">None recorded</p>';
         } else {
-            html += '<div class="table-container" style="max-height:300px;"><table><thead><tr><th>Date</th><th>Player</th><th>Team</th><th>vs</th><th>Detail</th></tr></thead><tbody>';
+            html += '<div class="table-container" style="max-height:300px;"><table><thead><tr><th>Date</th><th>Player</th><th>Matchup</th><th>Line</th></tr></thead><tbody>';
             data.slice(0, 50).forEach(m => {
+                // Shorten date: "February 22, 2026" -> "Feb 22, 2026"
+                let shortDate = m.date || '';
+                const dp = (m.date_yyyymmdd || '');
+                if (dp.length === 8) {
+                    const dt = new Date(dp.slice(0,4) + '-' + dp.slice(4,6) + '-' + dp.slice(6,8) + 'T12:00:00');
+                    if (!isNaN(dt)) shortDate = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                }
+                // Clickable date -> box score
+                const gameId = m.game_id || '';
+                const dateCell = gameId ? `<td class="game-link" onclick="showBoxScore('${gameId}')">${shortDate}</td>` : `<td>${shortDate}</td>`;
+                // Matchup: "GSW vs DEN"
+                const matchup = `${getTeamCode(m.team || '')} vs ${getTeamCode(m.opponent || '')}`;
+                // Build stat line from stats object when available
+                let line = '';
+                const st = m.stats;
+                if (st) {
+                    const mt = m.milestone_type || key;
+                    if (mt.includes('five_by_five') || mt.includes('all_around')) {
+                        line = `${st.pts||0} pts/${st.trb||0} reb/${st.ast||0} ast/${st.stl||0} stl/${st.blk||0} blk`;
+                    } else if (mt.includes('triple_double') || mt.includes('double_double')) {
+                        line = `${st.pts||0} pts/${st.trb||0} reb/${st.ast||0} ast`;
+                    } else if (mt.includes('point_game') || mt.includes('scoring')) {
+                        line = `${st.pts||0} pts`;
+                    } else if (mt.includes('rebound')) {
+                        line = `${st.trb||0} reb`;
+                    } else if (mt.includes('assist')) {
+                        line = `${st.ast||0} ast`;
+                    } else if (mt.includes('steal')) {
+                        line = `${st.stl||0} stl`;
+                    } else if (mt.includes('block')) {
+                        line = `${st.blk||0} blk`;
+                    } else if (mt.includes('three')) {
+                        line = `${st.fg3||0}-${st.fg3a||0} 3PT`;
+                    } else if (mt.includes('ft') || mt.includes('free_throw')) {
+                        line = `${st.ft||0}-${st.fta||0} FT`;
+                    } else if (mt.includes('fg') && mt.includes('perfect')) {
+                        line = `${st.fg||0}-${st.fga||0} FG`;
+                    } else if (mt.includes('turnover')) {
+                        line = `${st.tov||0} TO, ${Math.round(st.mp||0)} min`;
+                    } else if (mt.includes('plus') || mt.includes('minus')) {
+                        const pm = st.plus_minus||0;
+                        line = `${pm > 0 ? '+' : ''}${pm}`;
+                    } else if (mt.includes('shooting') || mt.includes('efficient') || mt.includes('game_score')) {
+                        line = `${st.pts||0} pts`;
+                    } else {
+                        line = m.detail || '';
+                    }
+                } else {
+                    line = m.detail || '';
+                }
                 html += `<tr>
-                    <td>${m.date || ''}</td>
+                    ${dateCell}
                     <td><span class="player-link" onclick="showPlayerDetail('${(m.player||'').replace(/'/g, "\\'")}')">${m.player || ''}</span></td>
-                    <td>${m.team || ''}</td>
-                    <td>${m.opponent || ''}</td>
-                    <td>${m.detail || ''}</td>
+                    <td>${matchup}</td>
+                    <td class="num">${line}</td>
                 </tr>`;
             });
-            if (data.length > 50) html += `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">...and ${data.length - 50} more</td></tr>`;
+            if (data.length > 50) html += `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">...and ${data.length - 50} more</td></tr>`;
             html += '</tbody></table></div>';
         }
         html += '</div>';
@@ -1110,6 +1646,13 @@ function renderRecords() {
         document.getElementById('pbp-records-tab').style.display = '';
         renderPbpRecords();
     }
+
+    // Show Shot Chart records tab if any game has shot chart data
+    const hasShotChart = games.some(g => g.brShotChart && g.brShotChart.shots && g.brShotChart.shots.length);
+    if (hasShotChart) {
+        document.getElementById('shot-records-tab').style.display = '';
+        renderShotRecords();
+    }
 }
 
 function renderPlayerRecords() {
@@ -1144,7 +1687,7 @@ function renderPlayerRecords() {
             <td class="num">${p[cat.key]}</td>
         </tr>`;
         }).join('');
-        return `<div class="record-item player-record"><h4>${cat.title}</h4><table><colgroup><col style="width:24px"><col><col style="width:100px"><col style="width:36px"><col style="width:32px"></colgroup>${rows}</table></div>`;
+        return `<div class="record-item player-record"><h4>${cat.title}</h4><table><colgroup><col style="width:24px"><col><col><col style="width:36px"><col style="width:32px"></colgroup>${rows}</table></div>`;
     }).join('');
 }
 
@@ -1190,7 +1733,7 @@ function renderPbpRecords() {
         const rows = comebacks.map((g, i) => `<tr>
             <td class="rank">${i+1}</td>
             <td class="game-link" onclick="showBoxScore('${g.game_id}')">${g.date}</td>
-            <td>${g.comeback.team}</td>
+            <td>${getTeamCode(g.comeback.team)}</td>
             <td class="num">${g.comeback.deficit} pts</td>
         </tr>`).join('');
         html += `<div class="record-item pbp-record"><h4>Biggest Comebacks</h4><table>${rows}</table></div>`;
@@ -1200,7 +1743,7 @@ function renderPbpRecords() {
         const rows = runs.slice(0, 10).map((r, i) => `<tr>
             <td class="rank">${i+1}</td>
             <td class="game-link" onclick="showBoxScore('${r.game.game_id}')">${r.game.date}</td>
-            <td>${r.team}</td>
+            <td>${getTeamCode(r.team)}</td>
             <td class="num">${r.points}-0 run</td>
         </tr>`).join('');
         html += `<div class="record-item pbp-record"><h4>Largest Scoring Runs</h4><table>${rows}</table></div>`;
@@ -1210,7 +1753,7 @@ function renderPbpRecords() {
         const rows = streaks.slice(0, 10).map((s, i) => `<tr>
             <td class="rank">${i+1}</td>
             <td class="game-link" onclick="showBoxScore('${s.game.game_id}')">${s.game.date}</td>
-            <td>${s.player} (${s.team})</td>
+            <td>${s.player} (${getTeamCode(s.team)})</td>
             <td class="num">${s.points} pts</td>
         </tr>`).join('');
         html += `<div class="record-item pbp-record"><h4>Longest Player Scoring Streaks</h4><table>${rows}</table></div>`;
@@ -1226,13 +1769,143 @@ function renderPbpRecords() {
         const rows = sorted.map((g, i) => `<tr>
             <td class="rank">${i+1}</td>
             <td class="game-link" onclick="showBoxScore('${g.game_id}')">${g.date}</td>
-            <td>${g.shot.player} (${g.shot.team})</td>
+            <td>${g.shot.player} (${getTeamCode(g.shot.team)})</td>
             <td class="num">Q${g.shot.period} ${g.shot.time}</td>
         </tr>`).join('');
         html += `<div class="record-item pbp-record"><h4>Decisive Shots</h4><table>${rows}</table></div>`;
     }
 
     grid.innerHTML = html || '<p style="text-align:center;padding:2rem;color:var(--text-muted);">No PBP records available</p>';
+}
+
+// Shot Chart Records
+function renderShotRecords() {
+    const games = DATA.games || [];
+    const grid = document.getElementById('shot-records-grid');
+    const scGames = games.filter(g => g.brShotChart && g.brShotChart.shots && g.brShotChart.shots.length);
+    if (!scGames.length) { grid.innerHTML = '<p style="text-align:center;padding:2rem;color:var(--text-muted);">No shot chart data</p>'; return; }
+
+    // Collect all shots with game context, distance, and original index
+    const allShots = [];
+    scGames.forEach(g => {
+        g.brShotChart.shots.forEach((s, idx) => {
+            const m = s.description && s.description.match(/from (\d+) ft/);
+            if (m) allShots.push({ ...s, dist: parseInt(m[1]), game: g, shotIdx: idx });
+        });
+    });
+
+    let html = '';
+
+    function shotRow(s, i) {
+        return `<tr class="shot-record-row" onclick="showBoxScoreWithShot('${s.game.game_id}',${s.shotIdx})">
+            <td class="rank">${i + 1}</td>
+            <td class="game-link">${s.game.date}</td>
+            <td><span class="player-link" onclick="event.stopPropagation();showPlayerDetail('${(s.player || '').replace(/'/g, "\\'")}')">${s.player}</span></td>
+            <td class="num">${s.dist} ft</td>
+        </tr>`;
+    }
+
+    // --- Longest Made Shots ---
+    const longestMade = allShots.filter(s => s.made).sort((a, b) => b.dist - a.dist).slice(0, 10);
+    if (longestMade.length) {
+        const rows = longestMade.map((s, i) => shotRow(s, i)).join('');
+        html += `<div class="record-item shot-record"><h4>Longest Made Shots</h4><table>${rows}</table></div>`;
+    }
+
+    // --- Longest Made 2-Pointers ---
+    const longest2 = allShots.filter(s => s.made && s.description && s.description.includes('2-pointer')).sort((a, b) => b.dist - a.dist).slice(0, 10);
+    if (longest2.length) {
+        const rows = longest2.map((s, i) => shotRow(s, i)).join('');
+        html += `<div class="record-item shot-record"><h4>Longest 2-Pointers</h4><table>${rows}</table></div>`;
+    }
+
+    // --- Longest Made 3-Pointers ---
+    const longest3 = allShots.filter(s => s.made && s.description && s.description.includes('3-pointer')).sort((a, b) => b.dist - a.dist).slice(0, 10);
+    if (longest3.length) {
+        const rows = longest3.map((s, i) => shotRow(s, i)).join('');
+        html += `<div class="record-item shot-record"><h4>Longest 3-Pointers</h4><table>${rows}</table></div>`;
+    }
+
+    // --- Best Single-Game FG% (min 10 FGA) ---
+    const playerGameStats = {};
+    scGames.forEach(g => {
+        g.brShotChart.shots.forEach(s => {
+            const key = s.player + '|' + g.game_id;
+            if (!playerGameStats[key]) playerGameStats[key] = { player: s.player, team: s.team, game: g, made: 0, total: 0 };
+            playerGameStats[key].total++;
+            if (s.made) playerGameStats[key].made++;
+        });
+    });
+    const bestFg = Object.values(playerGameStats)
+        .filter(p => p.total >= 10)
+        .map(p => ({ ...p, pct: p.made / p.total }))
+        .sort((a, b) => b.pct - a.pct || b.total - a.total)
+        .slice(0, 10);
+    if (bestFg.length) {
+        const rows = bestFg.map((p, i) => `<tr>
+            <td class="rank">${i + 1}</td>
+            <td class="game-link" onclick="showBoxScore('${p.game.game_id}')">${p.game.date}</td>
+            <td><span class="player-link" onclick="showPlayerDetail('${(p.player || '').replace(/'/g, "\\'")}')">${p.player}</span></td>
+            <td class="num">${p.made}/${p.total} (${(p.pct * 100).toFixed(1)}%)</td>
+        </tr>`).join('');
+        html += `<div class="record-item shot-record"><h4>Best FG% (min 10 FGA)</h4><table>${rows}</table></div>`;
+    }
+
+    // --- Most FGA in a Single Game ---
+    const mostFga = Object.values(playerGameStats).sort((a, b) => b.total - a.total).slice(0, 10);
+    if (mostFga.length) {
+        const rows = mostFga.map((p, i) => `<tr>
+            <td class="rank">${i + 1}</td>
+            <td class="game-link" onclick="showBoxScore('${p.game.game_id}')">${p.game.date}</td>
+            <td><span class="player-link" onclick="showPlayerDetail('${(p.player || '').replace(/'/g, "\\'")}')">${p.player}</span></td>
+            <td class="num">${p.made}/${p.total}</td>
+        </tr>`).join('');
+        html += `<div class="record-item shot-record"><h4>Most FGA (Single Game)</h4><table>${rows}</table></div>`;
+    }
+
+    // --- Best 3PT% in a Game (min 5 3PA) ---
+    const threeStats = {};
+    scGames.forEach(g => {
+        g.brShotChart.shots.forEach(s => {
+            if (!s.description || !s.description.includes('3-pointer')) return;
+            const key = s.player + '|' + g.game_id;
+            if (!threeStats[key]) threeStats[key] = { player: s.player, team: s.team, game: g, made: 0, total: 0 };
+            threeStats[key].total++;
+            if (s.made) threeStats[key].made++;
+        });
+    });
+    const best3pt = Object.values(threeStats)
+        .filter(p => p.total >= 5)
+        .map(p => ({ ...p, pct: p.made / p.total }))
+        .sort((a, b) => b.pct - a.pct || b.made - a.made)
+        .slice(0, 10);
+    if (best3pt.length) {
+        const rows = best3pt.map((p, i) => `<tr>
+            <td class="rank">${i + 1}</td>
+            <td class="game-link" onclick="showBoxScore('${p.game.game_id}')">${p.game.date}</td>
+            <td><span class="player-link" onclick="showPlayerDetail('${(p.player || '').replace(/'/g, "\\'")}')">${p.player}</span></td>
+            <td class="num">${p.made}/${p.total} (${(p.pct * 100).toFixed(1)}%)</td>
+        </tr>`).join('');
+        html += `<div class="record-item shot-record"><h4>Best 3PT% (min 5 3PA)</h4><table>${rows}</table></div>`;
+    }
+
+    // --- Overall Zone Efficiency ---
+    const zones = [
+        { label: 'Paint (0-4 ft)', test: d => d <= 4 },
+        { label: 'Short Mid (5-14 ft)', test: d => d >= 5 && d <= 14 },
+        { label: 'Long Mid (15-21 ft)', test: d => d >= 15 && d <= 21 },
+        { label: 'Three-Point (22+ ft)', test: d => d >= 22 },
+    ];
+    const zoneRows = zones.map(z => {
+        const zShots = allShots.filter(s => z.test(s.dist));
+        const made = zShots.filter(s => s.made).length;
+        const total = zShots.length;
+        const pct = total > 0 ? ((made / total) * 100).toFixed(1) : '-';
+        return `<tr><td>${z.label}</td><td class="num">${made}/${total}</td><td class="num">${pct}%</td></tr>`;
+    }).join('');
+    html += `<div class="record-item shot-record"><h4>Overall Zone Efficiency</h4><table><thead><tr><th>Zone</th><th>FG</th><th>FG%</th></tr></thead><tbody>${zoneRows}</tbody></table></div>`;
+
+    grid.innerHTML = html;
 }
 
 // Scorigami

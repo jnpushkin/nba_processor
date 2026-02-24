@@ -736,6 +736,7 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
                 <button class="sub-tab active" onclick="showRecordsSubTab('game-records')">Game Records</button>
                 <button class="sub-tab" onclick="showRecordsSubTab('player-records')">Player Records</button>
                 <button class="sub-tab" onclick="showRecordsSubTab('pbp-records')" id="pbp-records-tab" style="display:none;">PBP Records</button>
+                <button class="sub-tab" onclick="showRecordsSubTab('shot-records')" id="shot-records-tab" style="display:none;">Shot Chart Records</button>
             </div>
             <div id="game-records" class="sub-section active">
                 <div class="records-grid" id="game-records-grid"></div>
@@ -745,6 +746,9 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
             </div>
             <div id="pbp-records" class="sub-section">
                 <div class="records-grid" id="pbp-records-grid"></div>
+            </div>
+            <div id="shot-records" class="sub-section">
+                <div class="records-grid" id="shot-records-grid"></div>
             </div>
         </div>
 
