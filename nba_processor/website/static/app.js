@@ -20,12 +20,18 @@ let playerSortCol = null;
 let playerSortAsc = false;
 
 // Lazy initialization flags
+let dashboardInitialized = false;
+let gamesInitialized = false;
+let onThisDayInitialized = false;
 let recordsInitialized = false;
 let scorigamiInitialized = false;
 let matchupsInitialized = false;
 let calendarInitialized = false;
 let seasonsInitialized = false;
 let divisionsInitialized = false;
+
+// Navigation stack for back button
+let navStack = [];
 
 // Theme
 function toggleTheme() {
@@ -73,35 +79,113 @@ function parseURL() {
 
 function handleURLNavigation() {
     const { section, params } = parseURL();
-    if (!section) return;
+
+    // Backward compat: calendar?sub=calendar-onthisday -> onthisday
+    if (section === 'calendar' && params.sub === 'calendar-onthisday') {
+        _suppressURLUpdate = true;
+        showSection('onthisday');
+        _suppressURLUpdate = false;
+        return;
+    }
+
+    // Handle boxscore deep link
+    if (section === 'boxscore-view' || (section === 'boxscore' && params.game)) {
+        _suppressURLUpdate = true;
+        showBoxScore(params.game);
+        _suppressURLUpdate = false;
+        return;
+    }
+
+    if (!section) {
+        showSection('dashboard');
+        return;
+    }
     const tab = document.querySelector(`[data-section="${section}"]`);
-    if (!tab) return;
+    if (!tab) {
+        showSection('dashboard');
+        return;
+    }
     _suppressURLUpdate = true;
     showSection(section);
     if (params.sub) {
         if (section === 'records') showRecordsSubTab(params.sub);
         else if (section === 'matchups') showMatchupsSubTab(params.sub);
-        else if (section === 'calendar') showCalendarSubTab(params.sub);
     }
     _suppressURLUpdate = false;
-    if (params.game) showBoxScore(params.game);
     if (params.player) showPlayerDetail(params.player);
 }
 
 // Sections
 function showSection(id) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    // Track nav stack for back button (don't push boxscore-view)
+    const currentActive = document.querySelector('.section.active');
+    if (currentActive && currentActive.id !== id && id !== 'boxscore-view') {
+        navStack.push(currentActive.id);
+        if (navStack.length > 20) navStack.shift();
+    }
+
+    // Update sidebar nav items
+    document.querySelectorAll('.nav-item').forEach(t => t.classList.remove('active'));
+    const navBtn = document.querySelector(`.sidebar .nav-item[data-section="${id}"]`);
+    if (navBtn) navBtn.classList.add('active');
+
+    // Update mobile bottom nav
+    document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+    const mobileBtn = document.querySelector(`.mobile-nav-btn[data-section="${id}"]`);
+    if (mobileBtn) mobileBtn.classList.add('active');
+
+    // Hide all sections, show target
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-    document.querySelector(`[data-section="${id}"]`).classList.add('active');
-    document.getElementById(id).classList.add('active');
+    const el = document.getElementById(id);
+    if (el) el.classList.add('active');
+
+    // Close mobile sidebar
+    closeSidebar();
+
+    // Scroll to top of content
+    const contentArea = document.querySelector('.content-area');
+    if (contentArea) contentArea.scrollTop = 0;
+    window.scrollTo(0, 0);
+
+    // Lazy init
+    if (id === 'dashboard' && !dashboardInitialized) { dashboardInitialized = true; renderDashboard(); }
+    if (id === 'games' && !gamesInitialized) { gamesInitialized = true; renderGamesGrid(); }
     if (id === 'map' && !arenaMap) initMap();
     if (id === 'records' && !recordsInitialized) { recordsInitialized = true; renderRecords(); renderPlayerRecords(); }
     if (id === 'scorigami' && !scorigamiInitialized) { scorigamiInitialized = true; renderScorigami(); }
     if (id === 'matchups' && !matchupsInitialized) { matchupsInitialized = true; renderMatchups(); }
     if (id === 'calendar' && !calendarInitialized) { calendarInitialized = true; renderCalendar(); }
+    if (id === 'onthisday' && !onThisDayInitialized) { onThisDayInitialized = true; renderOnThisDay(); }
     if (id === 'seasons' && !seasonsInitialized) { seasonsInitialized = true; renderSeasonStats(); }
     if (id === 'divisions' && !divisionsInitialized) { divisionsInitialized = true; renderDivisionProgress(); }
+
     updateURL(id);
+}
+
+function goBack() {
+    if (navStack.length > 0) {
+        const prev = navStack.pop();
+        _suppressURLUpdate = true;
+        showSection(prev);
+        _suppressURLUpdate = false;
+        updateURL(prev);
+    } else {
+        showSection('games');
+    }
+}
+
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    sidebar.classList.toggle('open');
+    if (overlay) overlay.classList.toggle('active');
+}
+
+function closeSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (sidebar) sidebar.classList.remove('open');
+    if (overlay) overlay.classList.remove('active');
 }
 
 // Modals
@@ -111,6 +195,240 @@ function showToast(msg) {
     const t = document.getElementById('toast');
     t.textContent = msg; t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// Player Panel (slide-out)
+function openPlayerPanel() {
+    document.getElementById('player-panel').classList.add('active');
+    document.getElementById('panel-overlay').classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+function closePlayerPanel() {
+    document.getElementById('player-panel').classList.remove('active');
+    document.getElementById('panel-overlay').classList.remove('active');
+    document.body.style.overflow = '';
+    if (playerChart) { playerChart.destroy(); playerChart = null; }
+}
+
+// Command Palette
+function openCommandPalette() {
+    document.getElementById('cmd-palette-overlay').classList.add('active');
+    const input = document.getElementById('cmd-palette-input');
+    input.value = '';
+    document.getElementById('cmd-palette-results').innerHTML = '';
+    setTimeout(() => input.focus(), 50);
+}
+function closeCommandPalette() {
+    document.getElementById('cmd-palette-overlay').classList.remove('active');
+    _cmdHighlightIdx = -1;
+}
+
+let _cmdSearchTimeout = null;
+let _cmdHighlightIdx = -1;
+
+function handleCmdSearch(event) {
+    if (event.key === 'Escape') { closeCommandPalette(); return; }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter') {
+        const items = document.querySelectorAll('.cmd-result-item');
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            _cmdHighlightIdx = Math.min(_cmdHighlightIdx + 1, items.length - 1);
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            _cmdHighlightIdx = Math.max(_cmdHighlightIdx - 1, 0);
+        } else if (event.key === 'Enter') {
+            if (_cmdHighlightIdx >= 0 && items[_cmdHighlightIdx]) {
+                items[_cmdHighlightIdx].click();
+            }
+            return;
+        }
+        items.forEach((el, i) => el.classList.toggle('highlighted', i === _cmdHighlightIdx));
+        if (items[_cmdHighlightIdx]) items[_cmdHighlightIdx].scrollIntoView({ block: 'nearest' });
+        return;
+    }
+
+    clearTimeout(_cmdSearchTimeout);
+    const query = event.target.value.trim();
+    if (query.length < 2) { document.getElementById('cmd-palette-results').innerHTML = ''; _cmdHighlightIdx = -1; return; }
+    _cmdSearchTimeout = setTimeout(() => {
+        _cmdHighlightIdx = -1;
+        const results = performGlobalSearch(query);
+        renderCmdResults(results);
+    }, 120);
+}
+
+function renderCmdResults(results) {
+    const container = document.getElementById('cmd-palette-results');
+    const hasResults = results.games.length || results.players.length || results.arenas.length;
+    if (!hasResults) {
+        container.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--text-muted);">No results found</div>';
+        return;
+    }
+    let html = '';
+    if (results.games.length) {
+        html += '<div class="cmd-result-category"><div class="cmd-result-category-label">Games</div>';
+        results.games.forEach(g => {
+            html += `<div class="cmd-result-item" onclick="selectCmdResult('game','${g.game_id}')">
+                <span>${getTeamCode(g.away_team)} @ ${getTeamCode(g.home_team)} (${g.away_score}-${g.home_score})</span>
+                <span class="cmd-result-meta">${g.date}</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+    if (results.players.length) {
+        html += '<div class="cmd-result-category"><div class="cmd-result-category-label">Players</div>';
+        results.players.forEach(p => {
+            const safeName = (p.Player || '').replace(/'/g, "\\'");
+            html += `<div class="cmd-result-item" onclick="selectCmdResult('player','${safeName}')">
+                <span>${p.Player}</span>
+                <span class="cmd-result-meta">${getTeamCode(p.Team)} | ${p.Games || 0}G</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+    if (results.arenas.length) {
+        html += '<div class="cmd-result-category"><div class="cmd-result-category-label">Arenas</div>';
+        results.arenas.forEach(v => {
+            html += `<div class="cmd-result-item" onclick="selectCmdResult('arena','${v.code}')">
+                <span>${v.name}</span>
+                <span class="cmd-result-meta">${v.team}</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+    container.innerHTML = html;
+}
+
+function selectCmdResult(type, id) {
+    closeCommandPalette();
+    if (type === 'game') showBoxScore(id);
+    else if (type === 'player') showPlayerDetail(id);
+    else if (type === 'arena') showSection('venues');
+}
+
+// Dashboard
+function renderDashboard() {
+    // Last game card
+    const games = DATA.games || [];
+    const lastGameEl = document.getElementById('dash-last-game');
+    if (lastGameEl && games.length > 0) {
+        const g = games[0]; // sorted by date descending
+        const awayTeam = getShortName(g.away_team) || g.away_team || 'Away';
+        const homeTeam = getShortName(g.home_team) || g.home_team || 'Home';
+        const awayWon = (g.away_score || 0) > (g.home_score || 0);
+        lastGameEl.innerHTML = `<h4>Last Game</h4>
+            <div class="game-card" onclick="showBoxScore('${g.game_id}')" style="cursor:pointer;">
+                <div class="game-card-date">${g.date}</div>
+                <div class="game-card-matchup">
+                    <span class="team-score ${awayWon ? 'win' : ''}">${awayTeam} <strong>${g.away_score || 0}</strong></span>
+                    <span class="at-symbol">@</span>
+                    <span class="team-score ${!awayWon ? 'win' : ''}"><strong>${g.home_score || 0}</strong> ${homeTeam}</span>
+                </div>
+            </div>`;
+    } else if (lastGameEl) {
+        lastGameEl.innerHTML = '<h4>Last Game</h4><p style="color:var(--text-muted)">No games yet</p>';
+    }
+
+    // On This Day callout
+    const onThisDayEl = document.getElementById('dash-onthisday');
+    if (onThisDayEl) {
+        const today = new Date();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+                             'July', 'August', 'September', 'October', 'November', 'December'];
+        const matchingGames = games.filter(g => {
+            const d = g.date_yyyymmdd || '';
+            return d.length >= 8 && d.slice(4, 6) === mm && d.slice(6, 8) === dd;
+        });
+        if (matchingGames.length > 0) {
+            let html = `<h4>On This Day (${monthNames[parseInt(mm)]} ${parseInt(dd)})</h4>`;
+            matchingGames.slice(0, 3).forEach(g => {
+                const year = (g.date_yyyymmdd || '').slice(0, 4);
+                html += `<div class="dash-milestone-item" style="cursor:pointer" onclick="showBoxScore('${g.game_id}')">
+                    <span>${year}: ${getTeamCode(g.away_team)} ${g.away_score} @ ${getTeamCode(g.home_team)} ${g.home_score}</span>
+                </div>`;
+            });
+            if (matchingGames.length > 3) {
+                html += `<div style="font-size:0.8rem;color:var(--accent-color);cursor:pointer;padding-top:0.5rem;" onclick="showSection('onthisday')">View all ${matchingGames.length} games...</div>`;
+            }
+            onThisDayEl.innerHTML = html;
+        } else {
+            onThisDayEl.innerHTML = `<h4>On This Day (${monthNames[parseInt(mm)]} ${parseInt(dd)})</h4><p style="color:var(--text-muted);font-size:0.88rem;">No games on this date</p>`;
+        }
+    }
+
+    // Recent milestones (deduplicate by game+player, keep highest tier)
+    const recentEl = document.getElementById('dash-recent-milestones');
+    if (recentEl) {
+        const milestones = DATA.milestones || {};
+        const descriptions = DATA.milestone_descriptions || {};
+        // Tier priority: earlier in MILESTONE_ORDER = higher tier
+        const tierPriority = {};
+        MILESTONE_ORDER.forEach((k, i) => { tierPriority[k] = i; });
+        const allMilestones = [];
+        Object.entries(milestones).forEach(([key, list]) => {
+            if (!Array.isArray(list)) return;
+            list.forEach(m => {
+                allMilestones.push({ ...m, milestoneType: key, description: descriptions[key] || key.replace(/_/g, ' '), _tier: tierPriority[key] ?? 999 });
+            });
+        });
+        // Deduplicate: for same game_id + player, keep the highest tier (lowest _tier number)
+        const seen = {};
+        const deduped = [];
+        // Sort by tier first so we encounter highest tier first
+        allMilestones.sort((a, b) => a._tier - b._tier);
+        allMilestones.forEach(m => {
+            const key = (m.game_id || '') + '|' + (m.player || '');
+            if (!seen[key]) {
+                seen[key] = true;
+                deduped.push(m);
+            }
+        });
+        deduped.sort((a, b) => (b.date_yyyymmdd || '').localeCompare(a.date_yyyymmdd || ''));
+        const top5 = deduped.slice(0, 5);
+
+        if (top5.length > 0) {
+            let html = '<h4>Recent Milestones</h4>';
+            top5.forEach(m => {
+                let shortDate = m.date || '';
+                const dp = m.date_yyyymmdd || '';
+                if (dp.length === 8) {
+                    const dt = new Date(dp.slice(0,4)+'-'+dp.slice(4,6)+'-'+dp.slice(6,8)+'T12:00:00');
+                    if (!isNaN(dt)) shortDate = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                }
+                const safeName = (m.player || '').replace(/'/g, "\\'");
+                html += `<div class="dash-milestone-item">
+                    <span><span class="dash-milestone-player" onclick="showPlayerDetail('${safeName}')">${m.player || ''}</span> <span class="dash-milestone-detail">${m.description}</span></span>
+                    <span class="dash-milestone-date">${shortDate}</span>
+                </div>`;
+            });
+            recentEl.innerHTML = html;
+        } else {
+            recentEl.innerHTML = '<h4>Recent Milestones</h4><p style="color:var(--text-muted);font-size:0.88rem;">No milestones yet</p>';
+        }
+    }
+
+    // Animate number counters
+    document.querySelectorAll('.dash-card-number[data-count]').forEach(el => {
+        const target = parseInt(el.dataset.count) || 0;
+        animateCount(el, 0, target, 800);
+    });
+}
+
+function animateCount(el, start, end, duration) {
+    if (start === end) { el.textContent = end.toLocaleString(); return; }
+    const startTime = performance.now();
+    function update(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        // Ease-out cubic
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const current = Math.round(start + (end - start) * eased);
+        el.textContent = current.toLocaleString();
+        if (progress < 1) requestAnimationFrame(update);
+    }
+    requestAnimationFrame(update);
 }
 
 // Games Grid
@@ -333,7 +651,8 @@ function showBoxScore(gameId) {
     if (gameInfo?.brPbp) html += '<div class="bs-tab-content" id="bs-tab-pbp" style="display:none;" data-game-id="' + gameId + '"></div>';
 
     detail.innerHTML = html;
-    openModal('boxscore-modal');
+    showSection('boxscore-view');
+    updateURL('boxscore', { game: gameId });
 }
 
 // Box score sub-tab switching
@@ -1005,7 +1324,7 @@ function showPlayerDetail(name) {
     }
 
     document.getElementById('player-detail').innerHTML = html;
-    openModal('player-modal');
+    openPlayerPanel();
 
     // Initialize chart after DOM update
     if (games.length > 1) {
@@ -2394,19 +2713,12 @@ function renderSeasonStats() {
     }
 }
 
-// Calendar Sub-tabs
-let onThisDayInitialized = false;
-
+// Calendar Sub-tabs (legacy compat - calendar no longer has sub-tabs, but keep function for safety)
 function showCalendarSubTab(subId) {
-    document.querySelectorAll('#calendar .sub-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('#calendar .sub-section').forEach(s => s.classList.remove('active'));
-    document.querySelector(`#calendar .sub-tab[onclick*="${subId}"]`).classList.add('active');
-    document.getElementById(subId).classList.add('active');
-    if (subId === 'calendar-onthisday' && !onThisDayInitialized) {
-        onThisDayInitialized = true;
-        renderOnThisDay();
+    if (subId === 'calendar-onthisday') {
+        showSection('onthisday');
+        return;
     }
-    updateURL('calendar', { sub: subId });
 }
 
 function renderOnThisDay() {
@@ -2461,27 +2773,17 @@ function renderOnThisDay() {
     contentEl.innerHTML = html;
 }
 
-// Global Search
+// Global Search (legacy functions kept for compat, main search is now command palette)
 let _searchTimeout = null;
 
 function handleGlobalSearch(event) {
-    if (event.key === 'Escape') {
-        hideGlobalSearchResults();
-        event.target.blur();
-        return;
+    // Redirect to command palette
+    openCommandPalette();
+    const input = document.getElementById('cmd-palette-input');
+    if (input && event.target.value) {
+        input.value = event.target.value;
+        handleCmdSearch({ target: input, key: '' });
     }
-    clearTimeout(_searchTimeout);
-    const query = event.target.value.trim();
-    if (query.length < 2) { hideGlobalSearchResults(); return; }
-    if (event.key === 'Enter') {
-        const first = document.querySelector('.search-result-item');
-        if (first) first.click();
-        return;
-    }
-    _searchTimeout = setTimeout(() => {
-        const results = performGlobalSearch(query);
-        renderGlobalSearchResults(results);
-    }, 150);
 }
 
 function performGlobalSearch(query) {
@@ -2558,24 +2860,13 @@ function renderGlobalSearchResults(results) {
 }
 
 function selectGlobalSearchResult(type, id) {
-    hideGlobalSearchResults();
-    document.getElementById('global-search').value = '';
     if (type === 'game') showBoxScore(id);
     else if (type === 'player') showPlayerDetail(id);
     else if (type === 'arena') showSection('venues');
 }
 
-function showGlobalSearchResults() {
-    const input = document.getElementById('global-search');
-    const container = document.getElementById('global-search-results');
-    if (input.value.trim().length >= 2 && container.innerHTML) {
-        container.style.display = 'block';
-    }
-}
-
-function hideGlobalSearchResults() {
-    document.getElementById('global-search-results').style.display = 'none';
-}
+function showGlobalSearchResults() {}
+function hideGlobalSearchResults() {}
 
 // Division Progress
 function renderDivisionProgress() {
@@ -2641,7 +2932,7 @@ function toggleDivisionDetail(divName) {
 
 // Init
 document.addEventListener('DOMContentLoaded', function() {
-    renderGamesGrid();
+    // Eagerly init essential data
     renderLeaders();
     populateTeamDropdown();
     filteredPlayers = DATA.players ? [...DATA.players] : [];
@@ -2650,20 +2941,39 @@ document.addEventListener('DOMContentLoaded', function() {
     renderVenuesTable();
     renderMilestones();
     renderCareerFirsts();
-    handleURLNavigation();
+
+    // Add sidebar overlay for mobile
+    const overlayDiv = document.createElement('div');
+    overlayDiv.className = 'sidebar-overlay';
+    overlayDiv.id = 'sidebar-overlay';
+    overlayDiv.onclick = closeSidebar;
+    document.body.appendChild(overlayDiv);
+
+    // Handle URL or default to dashboard
+    const { section } = parseURL();
+    if (section) {
+        handleURLNavigation();
+    } else {
+        showSection('dashboard');
+    }
 });
 
 window.addEventListener('popstate', handleURLNavigation);
 
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
-        document.querySelectorAll('.modal.active').forEach(m => closeModal(m.id));
-        hideGlobalSearchResults();
+        // Close in priority order: command palette, player panel, modal
+        if (document.getElementById('cmd-palette-overlay')?.classList.contains('active')) {
+            closeCommandPalette();
+        } else if (document.getElementById('player-panel')?.classList.contains('active')) {
+            closePlayerPanel();
+        } else {
+            document.querySelectorAll('.modal.active').forEach(m => closeModal(m.id));
+        }
     }
-});
-
-document.addEventListener('click', e => {
-    if (!e.target.closest('.global-search-container')) {
-        hideGlobalSearchResults();
+    // Cmd+K / Ctrl+K shortcut for command palette
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        openCommandPalette();
     }
 });

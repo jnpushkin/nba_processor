@@ -270,6 +270,16 @@ def generate_website_from_data(processed_data: Dict[str, pd.DataFrame], output_p
     milestones = data.get('milestones', {})
     total_milestones = sum(len(v) for v in milestones.values() if isinstance(v, list))
 
+    # Compute totalSeasons from game dates
+    season_years = set()
+    for g in data['games']:
+        d = g.get('date_yyyymmdd', '')
+        if len(d) >= 6:
+            year = int(d[:4])
+            month = int(d[4:6])
+            start_year = year if month >= 10 else year - 1
+            season_years.add(start_year)
+
     summary = {
         'totalPlayers': len(players_df) if not players_df.empty else 0,
         'totalGames': len(data['games']),
@@ -284,6 +294,7 @@ def generate_website_from_data(processed_data: Dict[str, pd.DataFrame], output_p
         'teamsSeen': team_checklist['summary']['teamsSeen'],
         'totalTeams': 30,
         'careerFirsts': len(witnessed_firsts),
+        'totalSeasons': len(season_years),
     }
     data['summary'] = summary
 
@@ -601,6 +612,8 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NBA Stats Tracker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -609,192 +622,272 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
     </style>
 </head>
 <body>
-    <header class="header">
-        <div class="header-controls">
-            <div class="global-search-container">
-                <input type="text" id="global-search" class="global-search"
-                    placeholder="Search players, teams..."
-                    onkeyup="handleGlobalSearch(event)" onfocus="showGlobalSearchResults()">
-                <div id="global-search-results" class="global-search-results" style="display:none;"></div>
-            </div>
-            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">&#127769;</button>
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-brand">
+            <span class="sidebar-logo">NBA</span>
+            <span class="sidebar-title">Stats Tracker</span>
         </div>
-        <h1>NBA Stats Tracker</h1>
-        <p class="header-subtitle">Game-by-game statistics & arena tracking</p>
-        <div class="dashboard-grid">
-            <div class="progress-ring-container">
-                <svg class="progress-ring" viewBox="0 0 100 100">
-                    <circle class="progress-ring-bg" cx="50" cy="50" r="42"/>
-                    <circle class="progress-ring-fill" cx="50" cy="50" r="42"
-                        style="--progress: {(summary.get('teamsSeen', 0) / 30) * 100}"/>
-                </svg>
-                <div class="progress-ring-text">
-                    <div class="progress-ring-value">{summary.get('teamsSeen', 0)}<span class="progress-ring-total">/30</span></div>
-                    <div class="progress-ring-label">Teams</div>
-                </div>
-            </div>
-            <div class="progress-ring-container">
-                <svg class="progress-ring" viewBox="0 0 100 100">
-                    <circle class="progress-ring-bg" cx="50" cy="50" r="42"/>
-                    <circle class="progress-ring-fill arenas" cx="50" cy="50" r="42"
-                        style="--progress: {(summary.get('arenasVisited', 0) / 30) * 100}"/>
-                </svg>
-                <div class="progress-ring-text">
-                    <div class="progress-ring-value">{summary.get('arenasVisited', 0)}<span class="progress-ring-total">/30</span></div>
-                    <div class="progress-ring-label">Arenas</div>
-                </div>
-            </div>
-            <div class="progress-ring-container">
-                <svg class="progress-ring" viewBox="0 0 100 100">
-                    <circle class="progress-ring-bg" cx="50" cy="50" r="42"/>
-                    <circle class="progress-ring-fill milestones" cx="50" cy="50" r="42"
-                        style="--progress: {min((summary.get('totalMilestones', 0) / 100) * 100, 100)}"/>
-                </svg>
-                <div class="progress-ring-text">
-                    <div class="progress-ring-value">{summary.get('totalMilestones', 0)}</div>
-                    <div class="progress-ring-label">Milestones</div>
-                </div>
-            </div>
-            <div class="stats-column">
-                <div class="mini-stat">
-                    <span class="mini-stat-value">{summary.get('totalGames', 0)}</span>
-                    <span class="mini-stat-label">Games</span>
-                </div>
-                <div class="mini-stat">
-                    <span class="mini-stat-value">{summary.get('totalPlayers', 0)}</span>
-                    <span class="mini-stat-label">Players</span>
-                </div>
-                <div class="mini-stat">
-                    <span class="mini-stat-value">{summary.get('statesVisited', 0)}</span>
-                    <span class="mini-stat-label">States</span>
-                </div>
-            </div>
-        </div>
-    </header>
+        <nav class="sidebar-nav">
+            <button class="nav-item active" onclick="showSection('dashboard')" data-section="dashboard">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                Dashboard
+            </button>
 
-    <div class="container">
-        <nav class="tabs">
-            <button class="tab active" onclick="showSection('games')" data-section="games">Games</button>
-            <button class="tab" onclick="showSection('leaders')" data-section="leaders">Leaders</button>
-            <button class="tab" onclick="showSection('players')" data-section="players">Players</button>
-            <button class="tab" onclick="showSection('records')" data-section="records">Records</button>
-            <button class="tab" onclick="showSection('scorigami')" data-section="scorigami">Scorigami</button>
-            <button class="tab" onclick="showSection('matchups')" data-section="matchups">Matchups</button>
-            <button class="tab" onclick="showSection('calendar')" data-section="calendar">Calendar</button>
-            <button class="tab" onclick="showSection('seasons')" data-section="seasons">Seasons</button>
-            <button class="tab" onclick="showSection('teams')" data-section="teams">Teams</button>
-            <button class="tab" onclick="showSection('venues')" data-section="venues">Arenas</button>
-            <button class="tab" onclick="showSection('map')" data-section="map">Map</button>
-            <button class="tab" onclick="showSection('divisions')" data-section="divisions">Divisions</button>
-            <button class="tab" onclick="showSection('achievements')" data-section="achievements">Achievements</button>
-            <button class="tab" onclick="showSection('career-firsts')" data-section="career-firsts">Career Firsts</button>
+            <div class="nav-group-label">Games</div>
+            <button class="nav-item" onclick="showSection('games')" data-section="games">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20M2 12h20"/></svg>
+                Games
+            </button>
+            <button class="nav-item" onclick="showSection('calendar')" data-section="calendar">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                Calendar
+            </button>
+            <button class="nav-item" onclick="showSection('onthisday')" data-section="onthisday">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                On This Day
+            </button>
+
+            <div class="nav-group-label">Stats</div>
+            <button class="nav-item" onclick="showSection('leaders')" data-section="leaders">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z"/></svg>
+                Leaders
+            </button>
+            <button class="nav-item" onclick="showSection('players')" data-section="players">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Players
+            </button>
+            <button class="nav-item" onclick="showSection('records')" data-section="records">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                Records
+            </button>
+            <button class="nav-item" onclick="showSection('scorigami')" data-section="scorigami">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>
+                Scorigami
+            </button>
+            <button class="nav-item" onclick="showSection('matchups')" data-section="matchups">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1M6 8H5a4 4 0 0 0 0 8h1M8 12h8"/></svg>
+                Matchups
+            </button>
+            <button class="nav-item" onclick="showSection('seasons')" data-section="seasons">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                Seasons
+            </button>
+
+            <div class="nav-group-label">Coverage</div>
+            <button class="nav-item" onclick="showSection('teams')" data-section="teams">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                Teams
+            </button>
+            <button class="nav-item" onclick="showSection('venues')" data-section="venues">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                Arenas
+            </button>
+            <button class="nav-item" onclick="showSection('map')" data-section="map">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                Map
+            </button>
+            <button class="nav-item" onclick="showSection('divisions')" data-section="divisions">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7M11 18H8a2 2 0 0 1-2-2V9"/></svg>
+                Divisions
+            </button>
+
+            <div class="nav-group-label">Milestones</div>
+            <button class="nav-item" onclick="showSection('achievements')" data-section="achievements">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>
+                Achievements
+            </button>
+            <button class="nav-item" onclick="showSection('career-firsts')" data-section="career-firsts">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                Career Firsts
+            </button>
         </nav>
+        <div class="sidebar-footer">
+            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                <span>Theme</span>
+            </button>
+            <div class="sidebar-generated">Generated: {generated_time}</div>
+        </div>
+    </aside>
 
-        <!-- Games Section -->
-        <div id="games" class="section active">
-            <h2>Games Attended</h2>
-            <div class="games-grid" id="games-grid"></div>
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="topbar">
+            <button class="topbar-menu" onclick="toggleSidebar()" title="Menu">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <button class="topbar-search" onclick="openCommandPalette()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                <span>Search...</span>
+                <kbd>&#8984;K</kbd>
+            </button>
         </div>
 
-        <!-- Leaders Section -->
-        <div id="leaders" class="section">
-            <h2>Stat Leaders</h2>
-            <div class="leaders-grid" id="leaders-grid"></div>
-        </div>
-
-        <!-- Players Section -->
-        <div id="players" class="section">
-            <h2>Player Statistics
-                <div class="section-actions">
-                    <button class="btn btn-secondary" onclick="downloadCSV('players')">Download CSV</button>
-                </div>
-            </h2>
-            <div class="filters">
-                <div class="filter-group">
-                    <label>Search</label>
-                    <input type="text" id="players-search" placeholder="Search..." onkeyup="filterPlayersTable()">
-                </div>
-                <div class="filter-group">
-                    <label>Team</label>
-                    <select id="players-team" onchange="filterPlayersTable()"><option value="">All Teams</option></select>
-                </div>
-                <div class="filter-group">
-                    <label>Min Games</label>
-                    <input type="number" id="players-min-games" min="1" placeholder="1" onchange="filterPlayersTable()">
-                </div>
-                <button class="clear-filters" onclick="clearPlayersFilters()">Clear</button>
-            </div>
-            <div class="table-container">
-                <table id="players-table"><thead></thead><tbody></tbody></table>
-            </div>
-        </div>
-
-        <!-- Records Section -->
-        <div id="records" class="section">
-            <h2>Records</h2>
-            <div class="sub-tabs">
-                <button class="sub-tab active" onclick="showRecordsSubTab('game-records')">Game Records</button>
-                <button class="sub-tab" onclick="showRecordsSubTab('player-records')">Player Records</button>
-                <button class="sub-tab" onclick="showRecordsSubTab('pbp-records')" id="pbp-records-tab" style="display:none;">PBP Records</button>
-                <button class="sub-tab" onclick="showRecordsSubTab('shot-records')" id="shot-records-tab" style="display:none;">Shot Chart Records</button>
-            </div>
-            <div id="game-records" class="sub-section active">
-                <div class="records-grid" id="game-records-grid"></div>
-            </div>
-            <div id="player-records" class="sub-section">
-                <div class="records-grid" id="player-records-grid"></div>
-            </div>
-            <div id="pbp-records" class="sub-section">
-                <div class="records-grid" id="pbp-records-grid"></div>
-            </div>
-            <div id="shot-records" class="sub-section">
-                <div class="records-grid" id="shot-records-grid"></div>
-            </div>
-        </div>
-
-        <!-- Scorigami Section -->
-        <div id="scorigami" class="section">
-            <h2>Scorigami</h2>
-            <div class="scorigami-stats" id="scorigami-stats"></div>
-            <div class="scorigami-container">
-                <table class="scorigami-grid" id="scorigami-grid"></table>
-            </div>
-            <div class="scorigami-tooltip" id="scorigami-tooltip"></div>
-        </div>
-
-        <!-- Matchups Section -->
-        <div id="matchups" class="section">
-            <h2>Head-to-Head Matchups</h2>
-            <div class="sub-tabs">
-                <button class="sub-tab active" onclick="showMatchupsSubTab('matchup-matrix')">Team Matrix</button>
-                <button class="sub-tab" onclick="showMatchupsSubTab('matchup-h2h')">Head-to-Head</button>
-            </div>
-            <div id="matchup-matrix" class="sub-section active">
-                <div class="matchup-matrix-container" id="matchup-matrix-container"></div>
-            </div>
-            <div id="matchup-h2h" class="sub-section">
-                <div class="matchup-controls">
-                    <div class="filter-group">
-                        <label>Team 1</label>
-                        <select id="h2h-team1" onchange="renderH2H()"></select>
+        <div class="content-area">
+            <!-- Dashboard Section -->
+            <div id="dashboard" class="section active">
+                <h2>Dashboard</h2>
+                <div class="dash-stat-cards">
+                    <div class="dash-card">
+                        <div class="dash-card-number" data-count="{summary.get('totalGames', 0)}">{summary.get('totalGames', 0)}</div>
+                        <div class="dash-card-label">Games</div>
                     </div>
-                    <div class="filter-group">
-                        <label>Team 2</label>
-                        <select id="h2h-team2" onchange="renderH2H()"></select>
+                    <div class="dash-card">
+                        <div class="dash-card-number" data-count="{summary.get('totalPlayers', 0)}">{summary.get('totalPlayers', 0)}</div>
+                        <div class="dash-card-label">Players</div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="dash-card-number" data-count="{summary.get('totalMilestones', 0)}">{summary.get('totalMilestones', 0)}</div>
+                        <div class="dash-card-label">Milestones</div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="dash-card-number" data-count="{summary.get('totalSeasons', 0)}">{summary.get('totalSeasons', 0)}</div>
+                        <div class="dash-card-label">Seasons</div>
                     </div>
                 </div>
-                <div id="h2h-results" class="h2h-results"></div>
+                <div class="dash-row">
+                    <div class="dash-last-game" id="dash-last-game"></div>
+                    <div class="dash-onthisday" id="dash-onthisday"></div>
+                </div>
+                <div class="dash-progress-row">
+                    <div class="progress-ring-container">
+                        <svg class="progress-ring" viewBox="0 0 100 100">
+                            <circle class="progress-ring-bg" cx="50" cy="50" r="42"/>
+                            <circle class="progress-ring-fill" cx="50" cy="50" r="42"
+                                style="--progress: {(summary.get('teamsSeen', 0) / 30) * 100}"/>
+                        </svg>
+                        <div class="progress-ring-text">
+                            <div class="progress-ring-value">{summary.get('teamsSeen', 0)}<span class="progress-ring-total">/30</span></div>
+                            <div class="progress-ring-label">Teams</div>
+                        </div>
+                    </div>
+                    <div class="progress-ring-container">
+                        <svg class="progress-ring" viewBox="0 0 100 100">
+                            <circle class="progress-ring-bg" cx="50" cy="50" r="42"/>
+                            <circle class="progress-ring-fill arenas" cx="50" cy="50" r="42"
+                                style="--progress: {(summary.get('arenasVisited', 0) / 30) * 100}"/>
+                        </svg>
+                        <div class="progress-ring-text">
+                            <div class="progress-ring-value">{summary.get('arenasVisited', 0)}<span class="progress-ring-total">/30</span></div>
+                            <div class="progress-ring-label">Arenas</div>
+                        </div>
+                    </div>
+                    <div class="progress-ring-container">
+                        <svg class="progress-ring" viewBox="0 0 100 100">
+                            <circle class="progress-ring-bg" cx="50" cy="50" r="42"/>
+                            <circle class="progress-ring-fill milestones" cx="50" cy="50" r="42"
+                                style="--progress: {min((summary.get('totalMilestones', 0) / 100) * 100, 100)}"/>
+                        </svg>
+                        <div class="progress-ring-text">
+                            <div class="progress-ring-value">{summary.get('totalMilestones', 0)}</div>
+                            <div class="progress-ring-label">Milestones</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="dash-recent-milestones" id="dash-recent-milestones"></div>
             </div>
-        </div>
 
-        <!-- Calendar Section -->
-        <div id="calendar" class="section">
-            <h2>Game Calendar</h2>
-            <div class="sub-tabs">
-                <button class="sub-tab active" onclick="showCalendarSubTab('calendar-season')">Season Day Tracker</button>
-                <button class="sub-tab" onclick="showCalendarSubTab('calendar-onthisday')">On This Day</button>
+            <!-- Games Section -->
+            <div id="games" class="section">
+                <h2>Games Attended</h2>
+                <div class="games-grid" id="games-grid"></div>
             </div>
-            <div id="calendar-season" class="sub-section active">
+
+            <!-- Leaders Section -->
+            <div id="leaders" class="section">
+                <h2>Stat Leaders</h2>
+                <div class="leaders-grid" id="leaders-grid"></div>
+            </div>
+
+            <!-- Players Section -->
+            <div id="players" class="section">
+                <h2>Player Statistics
+                    <div class="section-actions">
+                        <button class="btn btn-secondary" onclick="downloadCSV('players')">Download CSV</button>
+                    </div>
+                </h2>
+                <div class="filters">
+                    <div class="filter-group">
+                        <label>Search</label>
+                        <input type="text" id="players-search" placeholder="Search..." onkeyup="filterPlayersTable()">
+                    </div>
+                    <div class="filter-group">
+                        <label>Team</label>
+                        <select id="players-team" onchange="filterPlayersTable()"><option value="">All Teams</option></select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Min Games</label>
+                        <input type="number" id="players-min-games" min="1" placeholder="1" onchange="filterPlayersTable()">
+                    </div>
+                    <button class="clear-filters" onclick="clearPlayersFilters()">Clear</button>
+                </div>
+                <div class="table-container">
+                    <table id="players-table"><thead></thead><tbody></tbody></table>
+                </div>
+            </div>
+
+            <!-- Records Section -->
+            <div id="records" class="section">
+                <h2>Records</h2>
+                <div class="sub-tabs">
+                    <button class="sub-tab active" onclick="showRecordsSubTab('game-records')">Game Records</button>
+                    <button class="sub-tab" onclick="showRecordsSubTab('player-records')">Player Records</button>
+                    <button class="sub-tab" onclick="showRecordsSubTab('pbp-records')" id="pbp-records-tab" style="display:none;">PBP Records</button>
+                    <button class="sub-tab" onclick="showRecordsSubTab('shot-records')" id="shot-records-tab" style="display:none;">Shot Chart Records</button>
+                </div>
+                <div id="game-records" class="sub-section active">
+                    <div class="records-grid" id="game-records-grid"></div>
+                </div>
+                <div id="player-records" class="sub-section">
+                    <div class="records-grid" id="player-records-grid"></div>
+                </div>
+                <div id="pbp-records" class="sub-section">
+                    <div class="records-grid" id="pbp-records-grid"></div>
+                </div>
+                <div id="shot-records" class="sub-section">
+                    <div class="records-grid" id="shot-records-grid"></div>
+                </div>
+            </div>
+
+            <!-- Scorigami Section -->
+            <div id="scorigami" class="section">
+                <h2>Scorigami</h2>
+                <div class="scorigami-stats" id="scorigami-stats"></div>
+                <div class="scorigami-container">
+                    <table class="scorigami-grid" id="scorigami-grid"></table>
+                </div>
+                <div class="scorigami-tooltip" id="scorigami-tooltip"></div>
+            </div>
+
+            <!-- Matchups Section -->
+            <div id="matchups" class="section">
+                <h2>Head-to-Head Matchups</h2>
+                <div class="sub-tabs">
+                    <button class="sub-tab active" onclick="showMatchupsSubTab('matchup-matrix')">Team Matrix</button>
+                    <button class="sub-tab" onclick="showMatchupsSubTab('matchup-h2h')">Head-to-Head</button>
+                </div>
+                <div id="matchup-matrix" class="sub-section active">
+                    <div class="matchup-matrix-container" id="matchup-matrix-container"></div>
+                </div>
+                <div id="matchup-h2h" class="sub-section">
+                    <div class="matchup-controls">
+                        <div class="filter-group">
+                            <label>Team 1</label>
+                            <select id="h2h-team1" onchange="renderH2H()"></select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Team 2</label>
+                            <select id="h2h-team2" onchange="renderH2H()"></select>
+                        </div>
+                    </div>
+                    <div id="h2h-results" class="h2h-results"></div>
+                </div>
+            </div>
+
+            <!-- Calendar Section -->
+            <div id="calendar" class="section">
+                <h2>Game Calendar</h2>
                 <div id="calendar-grid"></div>
                 <div class="calendar-legend">
                     <div class="calendar-legend-item">
@@ -807,7 +900,10 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
                     </div>
                 </div>
             </div>
-            <div id="calendar-onthisday" class="sub-section">
+
+            <!-- On This Day Section (standalone) -->
+            <div id="onthisday" class="section">
+                <h2>On This Day</h2>
                 <div style="text-align:center;margin-bottom:1.5rem;">
                     <h3 id="onthisday-date" style="font-size:1.5rem;color:var(--accent-color);"></h3>
                     <p style="color:var(--text-secondary);">Games attended on this date in previous years</p>
@@ -817,158 +913,168 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
                     No games attended on this date
                 </div>
             </div>
-        </div>
 
-        <!-- Seasons Section -->
-        <div id="seasons" class="section">
-            <h2>Season Stats</h2>
-            <div class="season-stats-container">
-                <div class="season-chart-container">
-                    <canvas id="season-chart"></canvas>
+            <!-- Seasons Section -->
+            <div id="seasons" class="section">
+                <h2>Season Stats</h2>
+                <div class="season-stats-container">
+                    <div class="season-chart-container">
+                        <canvas id="season-chart"></canvas>
+                    </div>
+                    <div class="season-summary" id="season-summary"></div>
+                    <div class="table-container" style="margin-top:1rem;">
+                        <table id="season-table">
+                            <thead>
+                                <tr>
+                                    <th>Season</th>
+                                    <th class="num">Games</th>
+                                    <th class="num">Teams</th>
+                                    <th class="num">Arenas</th>
+                                    <th class="num">Players</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
                 </div>
-                <div class="season-summary" id="season-summary"></div>
-                <div class="table-container" style="margin-top:1rem;">
-                    <table id="season-table">
-                        <thead>
-                            <tr>
-                                <th>Season</th>
-                                <th class="num">Games</th>
-                                <th class="num">Teams</th>
-                                <th class="num">Arenas</th>
-                                <th class="num">Players</th>
-                            </tr>
-                        </thead>
+            </div>
+
+            <!-- Teams Section -->
+            <div id="teams" class="section">
+                <h2>Team Checklist</h2>
+                <div class="team-progress">
+                    <div class="progress-bar"><div class="progress-fill" id="team-progress-fill"></div></div>
+                    <div class="progress-text" id="team-progress-text">0/30 Teams Seen</div>
+                </div>
+                <div class="checklist-tabs">
+                    <button class="checklist-tab active" onclick="showChecklistView('all')" data-view="all">All Teams</button>
+                    <button class="checklist-tab" onclick="showChecklistView('east')" data-view="east">Eastern</button>
+                    <button class="checklist-tab" onclick="showChecklistView('west')" data-view="west">Western</button>
+                    <button class="checklist-tab" onclick="showChecklistView('divisions')" data-view="divisions">By Division</button>
+                </div>
+                <div id="team-checklist-container" class="team-checklist-container"></div>
+            </div>
+
+            <!-- Venues Section -->
+            <div id="venues" class="section">
+                <h2>Arena Checklist</h2>
+                <div class="arena-progress">
+                    <div class="progress-bar"><div class="progress-fill" id="arena-progress-fill"></div></div>
+                    <div class="progress-text" id="arena-progress-text">0/30 Arenas Visited</div>
+                </div>
+                <div class="filters">
+                    <div class="filter-group">
+                        <label>Show</label>
+                        <select id="venues-filter" onchange="filterVenuesTable()">
+                            <option value="all">All Arenas</option>
+                            <option value="visited">Visited Only</option>
+                            <option value="unvisited">Not Visited</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table id="venues-table">
+                        <thead><tr><th>Team</th><th>Arena</th><th>City</th><th>State</th><th>Games</th><th>First Visit</th><th>Status</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
             </div>
-        </div>
 
-        <!-- Teams Section -->
-        <div id="teams" class="section">
-            <h2>Team Checklist</h2>
-            <div class="team-progress">
-                <div class="progress-bar"><div class="progress-fill" id="team-progress-fill"></div></div>
-                <div class="progress-text" id="team-progress-text">0/30 Teams Seen</div>
-            </div>
-            <div class="checklist-tabs">
-                <button class="checklist-tab active" onclick="showChecklistView('all')" data-view="all">All Teams</button>
-                <button class="checklist-tab" onclick="showChecklistView('east')" data-view="east">Eastern</button>
-                <button class="checklist-tab" onclick="showChecklistView('west')" data-view="west">Western</button>
-                <button class="checklist-tab" onclick="showChecklistView('divisions')" data-view="divisions">By Division</button>
-            </div>
-            <div id="team-checklist-container" class="team-checklist-container"></div>
-        </div>
-
-        <!-- Venues Section -->
-        <div id="venues" class="section">
-            <h2>Arena Checklist</h2>
-            <div class="arena-progress">
-                <div class="progress-bar"><div class="progress-fill" id="arena-progress-fill"></div></div>
-                <div class="progress-text" id="arena-progress-text">0/30 Arenas Visited</div>
-            </div>
-            <div class="filters">
-                <div class="filter-group">
-                    <label>Show</label>
-                    <select id="venues-filter" onchange="filterVenuesTable()">
-                        <option value="all">All Arenas</option>
-                        <option value="visited">Visited Only</option>
-                        <option value="unvisited">Not Visited</option>
-                    </select>
+            <!-- Map Section -->
+            <div id="map" class="section">
+                <h2>Arena Map</h2>
+                <div class="map-legend">
+                    <span class="legend-item"><span class="legend-dot visited"></span> Visited</span>
+                    <span class="legend-item"><span class="legend-dot not-visited"></span> Not Visited</span>
                 </div>
+                <div id="arena-map"></div>
             </div>
-            <div class="table-container">
-                <table id="venues-table">
-                    <thead><tr><th>Team</th><th>Arena</th><th>City</th><th>State</th><th>Games</th><th>First Visit</th><th>Status</th></tr></thead>
-                    <tbody></tbody>
-                </table>
+
+            <!-- Divisions Section -->
+            <div id="divisions" class="section">
+                <h2>Division Progress</h2>
+                <div id="divisions-content"></div>
+            </div>
+
+            <!-- Achievements Section -->
+            <div id="achievements" class="section">
+                <h2>Milestones & Achievements ({summary.get('totalMilestones', 0)} total)</h2>
+                <div class="milestone-filters">
+                    <div class="filter-group">
+                        <label>Category</label>
+                        <select id="milestone-category" onchange="filterMilestones()">
+                            <option value="all">All Categories</option>
+                            <option value="multi">Multi-Category</option>
+                            <option value="scoring">Scoring</option>
+                            <option value="rebounding">Rebounding</option>
+                            <option value="assists">Assists</option>
+                            <option value="steals">Steals</option>
+                            <option value="blocks">Blocks</option>
+                            <option value="threes">Three-Pointers</option>
+                            <option value="efficiency">Efficiency</option>
+                            <option value="combined">Combined</option>
+                            <option value="defensive">Defensive</option>
+                            <option value="plusminus">Plus/Minus</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Search Player</label>
+                        <input type="text" id="milestone-search" placeholder="Search..." onkeyup="filterMilestones()">
+                    </div>
+                </div>
+                <div id="milestones-container" class="milestones-container"></div>
+            </div>
+
+            <!-- Career Firsts Section -->
+            <div id="career-firsts" class="section">
+                <h2>Career Firsts & Milestones ({summary.get('careerFirsts', 0)} witnessed)</h2>
+                <p class="section-description">Career milestones you witnessed players achieve - first career points, 1000th career rebound, etc.</p>
+                <div class="milestone-filters">
+                    <div class="filter-group">
+                        <label>Category</label>
+                        <select id="career-firsts-category" onchange="filterCareerFirsts()">
+                            <option value="all">All</option>
+                            <option value="first">Career Firsts</option>
+                            <option value="milestone">Career Milestones</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Search Player</label>
+                        <input type="text" id="career-firsts-search" placeholder="Search..." onkeyup="filterCareerFirsts()">
+                    </div>
+                </div>
+                <div id="career-firsts-container" class="milestones-container"></div>
+            </div>
+
+            <!-- Box Score View (inline, replaces modal) -->
+            <div id="boxscore-view" class="section">
+                <button class="back-button" onclick="goBack()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    Back
+                </button>
+                <div id="boxscore-detail"></div>
             </div>
         </div>
+    </main>
 
-        <!-- Map Section -->
-        <div id="map" class="section">
-            <h2>Arena Map</h2>
-            <div class="map-legend">
-                <span class="legend-item"><span class="legend-dot visited"></span> Visited</span>
-                <span class="legend-item"><span class="legend-dot not-visited"></span> Not Visited</span>
-            </div>
-            <div id="arena-map"></div>
-        </div>
+    <!-- Player Panel (slide-out) -->
+    <div class="panel-overlay" id="panel-overlay" onclick="closePlayerPanel()"></div>
+    <aside class="player-panel" id="player-panel">
+        <button class="panel-close" onclick="closePlayerPanel()">&times;</button>
+        <div id="player-detail"></div>
+    </aside>
 
-        <!-- Divisions Section -->
-        <div id="divisions" class="section">
-            <h2>Division Progress</h2>
-            <div id="divisions-content"></div>
-        </div>
-
-        <!-- Achievements Section -->
-        <div id="achievements" class="section">
-            <h2>Milestones & Achievements ({summary.get('totalMilestones', 0)} total)</h2>
-            <div class="milestone-filters">
-                <div class="filter-group">
-                    <label>Category</label>
-                    <select id="milestone-category" onchange="filterMilestones()">
-                        <option value="all">All Categories</option>
-                        <option value="multi">Multi-Category</option>
-                        <option value="scoring">Scoring</option>
-                        <option value="rebounding">Rebounding</option>
-                        <option value="assists">Assists</option>
-                        <option value="steals">Steals</option>
-                        <option value="blocks">Blocks</option>
-                        <option value="threes">Three-Pointers</option>
-                        <option value="efficiency">Efficiency</option>
-                        <option value="combined">Combined</option>
-                        <option value="defensive">Defensive</option>
-                        <option value="plusminus">Plus/Minus</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Search Player</label>
-                    <input type="text" id="milestone-search" placeholder="Search..." onkeyup="filterMilestones()">
-                </div>
-            </div>
-            <div id="milestones-container" class="milestones-container"></div>
-        </div>
-
-        <!-- Career Firsts Section -->
-        <div id="career-firsts" class="section">
-            <h2>Career Firsts & Milestones ({summary.get('careerFirsts', 0)} witnessed)</h2>
-            <p class="section-description">Career milestones you witnessed players achieve - first career points, 1000th career rebound, etc.</p>
-            <div class="milestone-filters">
-                <div class="filter-group">
-                    <label>Category</label>
-                    <select id="career-firsts-category" onchange="filterCareerFirsts()">
-                        <option value="all">All</option>
-                        <option value="first">Career Firsts</option>
-                        <option value="milestone">Career Milestones</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Search Player</label>
-                    <input type="text" id="career-firsts-search" placeholder="Search..." onkeyup="filterCareerFirsts()">
-                </div>
-            </div>
-            <div id="career-firsts-container" class="milestones-container"></div>
+    <!-- Command Palette -->
+    <div class="cmd-palette-overlay" id="cmd-palette-overlay" onclick="closeCommandPalette()">
+        <div class="cmd-palette" onclick="event.stopPropagation()">
+            <input type="text" class="cmd-palette-input" id="cmd-palette-input"
+                placeholder="Search players, teams, games..."
+                onkeyup="handleCmdSearch(event)" oninput="handleCmdSearch(event)">
+            <div class="cmd-palette-results" id="cmd-palette-results"></div>
         </div>
     </div>
 
-    <!-- Box Score Modal -->
-    <div class="modal" id="boxscore-modal" onclick="if(event.target === this) closeModal('boxscore-modal')">
-        <div class="modal-content modal-large">
-            <button class="modal-close" onclick="closeModal('boxscore-modal')">&times;</button>
-            <div id="boxscore-detail"></div>
-        </div>
-    </div>
-
-    <!-- Player Modal -->
-    <div class="modal" id="player-modal" onclick="if(event.target === this) closeModal('player-modal')">
-        <div class="modal-content">
-            <button class="modal-close" onclick="closeModal('player-modal')">&times;</button>
-            <div id="player-detail"></div>
-        </div>
-    </div>
-
-    <!-- Day Games Modal -->
+    <!-- Day Games Modal (kept as simple modal) -->
     <div class="modal" id="day-games-modal" onclick="if(event.target === this) closeModal('day-games-modal')">
         <div class="modal-content">
             <button class="modal-close" onclick="closeModal('day-games-modal')">&times;</button>
@@ -978,7 +1084,29 @@ def _generate_html(json_data: str, summary: Dict[str, Any]) -> str:
 
     <div id="toast" class="toast"></div>
 
-    <footer><p>Generated: {generated_time}</p></footer>
+    <!-- Mobile Bottom Nav -->
+    <nav class="mobile-nav" id="mobile-nav">
+        <button class="mobile-nav-btn active" onclick="showSection('dashboard')" data-section="dashboard">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            <span>Home</span>
+        </button>
+        <button class="mobile-nav-btn" onclick="showSection('games')" data-section="games">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20M2 12h20"/></svg>
+            <span>Games</span>
+        </button>
+        <button class="mobile-nav-btn" onclick="showSection('leaders')" data-section="leaders">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z"/></svg>
+            <span>Stats</span>
+        </button>
+        <button class="mobile-nav-btn" onclick="showSection('teams')" data-section="teams">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            <span>Coverage</span>
+        </button>
+        <button class="mobile-nav-btn" onclick="showSection('achievements')" data-section="achievements">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>
+            <span>Milestones</span>
+        </button>
+    </nav>
 
     <script>
 const DATA = {json_data};
